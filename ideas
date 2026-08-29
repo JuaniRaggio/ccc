@@ -17,3 +17,8 @@ Potenciales ideas para el proyecto
 
 - Agregarle un borrow checker a C como el de rust con checks de overflow, etc.
 
+
+- Lenguaje dataflow que compila a (LLVM IR o C) con ejecucion paralela usando
+  pthreads. El programa describe un grafo de operaciones sobre streams de datos
+  y el compilador se encarga del scheduling, deteccion de dependencias y
+  sincronizacion entre threads.
