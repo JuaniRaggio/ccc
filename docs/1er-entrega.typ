@@ -244,7 +244,9 @@ Cuando el compilador detecta (o el programador anota con `__parallel`) que dos c
 
 = Casos de Prueba
 
-A continuacion se describen los casos de prueba que cubren las construcciones principales del lenguaje.
+== Casos de aceptacion
+
+El compilador debe aceptar y traducir correctamente los siguientes programas.
 
 #v(0.5em)
 
@@ -252,17 +254,41 @@ A continuacion se describen los casos de prueba que cubren las construcciones pr
   columns: (auto, 1fr, 1fr),
   fill: (_, row) => if row == 0 { luma(220) } else { white },
   [*N*], [*Descripcion*], [*Construccion cubierta*],
-  [1], [Suma de dos enteros de 32 bits], [Expresion aritmetica, `always_comb`],
-  [2], [Clasificacion de un valor respecto a un umbral], [`if`/`else`, multiplexor],
-  [3], [Suma acumulada de un arreglo de 8 elementos], [Bucle `for`, FSM, `always_ff`],
-  [4], [Calculo de dos funciones independientes sobre la misma entrada], [`__parallel`, bloques concurrentes],
-  [5], [Pipeline: filtrar y luego acumular un arreglo], [Composicion de modulos, latencia],
-  [6], [Funcion con condicional dentro de un bucle], [Combinacion de FSM y multiplexor],
+  [A1], [Suma de dos enteros de 32 bits], [Expresion aritmetica, `always_comb`],
+  [A2], [Clasificacion de un valor respecto a un umbral], [`if`/`else`, multiplexor],
+  [A3], [Suma acumulada de un arreglo de 8 elementos], [Bucle `for`, FSM, `always_ff`],
+  [A4], [Calculo de dos funciones independientes sobre la misma entrada], [`__parallel`, bloques concurrentes],
+  [A5], [Pipeline: filtrar y luego acumular un arreglo], [Composicion de modulos, latencia],
+  [A6], [Funcion con condicional dentro de un bucle], [Combinacion de FSM y multiplexor],
+  [A7], [Dos referencias `unique` a variables distintas], [Paralelizacion correcta con `unique`],
+  [A8], [Referencia `aliased` usada correctamente sin paralelismo], [`aliased` deshabilita paralelizacion],
+  [A9], [Uso de `__abs`, `__min`, `__max` en expresion], [Builtins del lenguaje],
+  [A10], [Bucle `for` con limite conocido en tiempo de compilacion], [Rango estatico, FSM o desenrollado],
+)
+
+== Casos de rechazo
+
+El compilador debe rechazar los siguientes programas con un mensaje de error descriptivo.
+
+#v(0.5em)
+
+#table(
+  columns: (auto, 1fr, 1fr),
+  fill: (_, row) => if row == 0 { luma(220) } else { white },
+  [*N*], [*Descripcion*], [*Razon del rechazo*],
+  [R1], [Funcion recursiva], [No se soporta recursion],
+  [R2], [Variable de tipo `float` o `double`], [Tipos de punto flotante no soportados],
+  [R3], [Llamada a `printf`, `malloc` u otra funcion de stdlib], [Funciones de biblioteca estandar no soportadas],
+  [R4], [Referencia declarada como variable local (no como parametro)], [Referencias validas solo como parametros],
+  [R5], [Pasar el mismo simbolo dos veces a parametros `unique`], [Aliasing detectado en call site],
+  [R6], [Bucle `for` con limite no conocido en tiempo de compilacion], [Rango dinamico no sintetizable como FSM estatica],
+  [R7], [Bloque `__parallel` con sentencias que comparten una variable escrita], [Dependencia de datos dentro del bloque paralelo],
+  [R8], [Funcion sin tipo de retorno explicito], [Toda funcion debe declarar su tipo de retorno],
 )
 
 = Ejemplos
 
-== Ejemplo 1: operacion combinacional simple
+== Operacion combinacional simple
 
 Dos operaciones independientes sobre la misma entrada se sintetizan en paralelo. El compilador detecta que `cuadrado` y `valor_absoluto` no comparten escrituras y genera dos bloques `always_comb` separados.
 
@@ -295,7 +321,7 @@ Dos operaciones independientes sobre la misma entrada se sintetizan en paralelo.
   ]
 )
 
-== Ejemplo 2: condicional como multiplexor
+== Condicional como multiplexor
 
 Un `if`/`else` simple sin estado se traduce directamente a logica combinacional con un multiplexor implicito.
 
@@ -332,7 +358,8 @@ Un `if`/`else` simple sin estado se traduce directamente a logica combinacional 
   ]
 )
 
-== Ejemplo 3: bucle con acumulador (FSM)
+
+== Bucle con acumulador (FSM)
 
 Un bucle `for` con un acumulador requiere estado entre ciclos de clock. El compilador genera una FSM con estados `IDLE`, `COMPUTE` y `DONE`.
 
