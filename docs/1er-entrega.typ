@@ -124,19 +124,20 @@ El compilador acepta como entrada un archivo `.c` con anotaciones opcionales y p
 
 El compilador soporta las siguientes construcciones del lenguaje C:
 
-- Tipos enteros con ancho de bits explicito: `int8_t`, `int16_t`, `int32_t`, `uint8_t`, `uint16_t`, `uint32_t`
+- Tipos enteros con ancho de bits explicito: `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t`
 - Tipo booleano: `bool`
 - Arreglos unidimensionales de tipos enteros
 - Expresiones aritmeticas: `+`, `-`, `*`
 - Expresiones logicas y de comparacion: `&&`, `||`, `!`, `==`, `!=`, `<`, `>`, `<=`, `>=`
 - Estructuras de control: `if`/`else`, `for`, `while`
 - Funciones con parametros y valor de retorno (cada funcion se traduce a un modulo Verilog independiente)
-- Punteros como parametros de funcion con qualifiers de aliasing: `unique` (default, garantia de no-aliasing) y `aliased` (puede solaparse con otro puntero)
+- Referencias como parametros de funcion con qualifiers de aliasing: `unique` (default, garantia de no-aliasing) y `aliased` (puede referirse al mismo objeto que otra referencia)
 - Anotacion `__parallel` para marcar bloques que el programador garantiza como independientes
+- Builtins del lenguaje para operaciones matematicas comunes: `__abs`, `__min`, `__max`
 
-No se soportan: memoria dinamica, recursion, tipos de punto flotante, ni llamadas a funciones de biblioteca estandar.
+No se soportan: memoria dinamica, recursion, tipos de punto flotante, ni llamadas a funciones de biblioteca estandar. Las funciones de stdlib no tienen analogo en hardware sintetizable ya que asumen la existencia de sistema operativo, heap y file descriptors. En su lugar el lenguaje provee builtins con semantica de hardware definida.
 
-Los punteros son validos unicamente como parametros de funcion. Dentro del cuerpo de una funcion no se pueden declarar punteros locales ni hacer aritmetica de punteros mas alla de indexacion de arreglos. Por defecto todos los punteros son `unique`: el compilador asume no-aliasing y puede paralelizar operaciones sobre ellos. Si el programador necesita expresar que dos punteros pueden apuntar a la misma memoria, debe anotarlos con `aliased`, lo que deshabilita la paralelizacion automatica entre esas variables.
+Las referencias son validas unicamente como parametros de funcion. A diferencia de los punteros no pueden ser nulas ni reasignadas, lo que elimina toda una clase de errores que no tienen sentido en hardware sintetizable: en hardware una referencia modela una conexion de cable que siempre existe. Por defecto todas las referencias son `unique`: el compilador asume no-aliasing y puede paralelizar operaciones sobre ellas. Si el programador necesita expresar que dos referencias pueden referirse al mismo objeto, debe anotarlas con `aliased`, lo que deshabilita la paralelizacion automatica entre esas variables.
 
 = Construcciones
 
@@ -152,22 +153,43 @@ int32_t suma(int32_t a, int32_t b) {
 }
 ```
 
-=== Punteros con qualifier de aliasing
+=== Referencias con qualifier de aliasing
 
-Los punteros solo son validos como parametros de funcion. El qualifier va entre el `*` y el nombre del parametro, consistente con como C trata `const` y `restrict`.
+Las referencias son validas unicamente como parametros de funcion. El qualifier va entre el `&` y el nombre del parametro, consistente con como C trata `const`.
 
-`unique` es el default e indica que el compilador puede asumir que ese puntero no se solapa con ningun otro parametro. `aliased` desactiva esa garantia.
+`unique` es el default e indica que el compilador puede asumir que esa referencia no se solapa con ninguna otra. `aliased` desactiva esa garantia. Al no poder ser nulas, el compilador no necesita emitir chequeos de null, lo que simplifica el hardware generado.
 
 ```c
 // unique es el default, estas dos firmas son equivalentes
-void escalar(int32_t * unique salida, int32_t * unique entrada, int32_t factor);
-void escalar(int32_t *salida, int32_t *entrada, int32_t factor);
+void escalar(int32_t &unique salida, int32_t &unique entrada, int32_t factor);
+void escalar(int32_t &salida, int32_t &entrada, int32_t factor);
 
 // aliased: el compilador no puede asumir que salida != entrada
-void in_place(int32_t * aliased salida, int32_t *entrada, int32_t factor);
+void in_place(int32_t &aliased salida, int32_t &entrada, int32_t factor);
 ```
 
 El compilador detecta en el call site los casos obvios de aliasing (pasar el mismo simbolo dos veces a parametros `unique`) y emite un error.
+
+Esta decision representa una mejora significativa respecto a C estandar. En C, cualquier puntero puede ser `NULL` y el programador es responsable de verificarlo antes de cada uso. Esos chequeos generan branches adicionales que en hardware se traducen en logica extra y potenciales ciclos de clock desperdiciados. Al usar referencias, la garantia de no-nulidad es estatica y verificada en tiempo de compilacion, por lo que el hardware generado no contiene ninguna logica de validacion de direcciones.
+
+=== Builtins del lenguaje
+
+El lenguaje no soporta llamadas a funciones de biblioteca estandar porque estas asumen la existencia de sistema operativo, heap y file descriptors, ninguno de los cuales existe en hardware sintetizable. En su lugar se proveen builtins con semantica de hardware definida por el compilador:
+
+#table(
+  columns: (auto, 1fr, 1fr),
+  fill: (_, row) => if row == 0 { luma(220) } else { white },
+  [*Builtin*], [*Descripcion*], [*Hardware generado*],
+  [`__abs(x)`], [Valor absoluto], [Logica combinacional],
+  [`__min(x, y)`], [Minimo entre dos valores], [Comparador + multiplexor],
+  [`__max(x, y)`], [Maximo entre dos valores], [Comparador + multiplexor],
+)
+
+```c
+int32_t normalizar(int32_t x, int32_t tope) {
+    return __min(__abs(x), tope);
+}
+```
 
 === Bloque paralelo
 
@@ -185,7 +207,7 @@ __parallel {
 Los bucles `for` con limites conocidos en tiempo de compilacion se pueden desenrollar o sintetizar como maquinas de estados finitos (FSM) con pipeline.
 
 ```c
-for (int i = 0; i < 8; i++) {
+for (int32_t i = 0; i < 8; i++) {
     acum += datos[i];
 }
 ```
@@ -283,8 +305,7 @@ Un `if`/`else` simple sin estado se traduce directamente a logica combinacional 
   [
     *Entrada (C)*
     ```c
-    int32_t clamp(int32_t x,
-                  int32_t tope) {
+    int32_t clamp(int32_t x, int32_t tope) {
         if (x > tope)
             return tope;
         else
@@ -321,11 +342,9 @@ Un bucle `for` con un acumulador requiere estado entre ciclos de clock. El compi
   [
     *Entrada (C)*
     ```c
-    int32_t sumar(
-        int32_t datos[8]
-    ) {
+    int32_t sumar(int32_t datos[8]) {
         int32_t acum = 0;
-        for (int i = 0; i < 8; i++)
+        for (int32_t i = 0; i < 8; i++)
             acum += datos[i];
         return acum;
     }
