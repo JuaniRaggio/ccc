@@ -1,6 +1,6 @@
-[![✗](https://img.shields.io/badge/Release-v2.0.0-ffb600.svg?style=for-the-badge)](https://github.com/agustin-golmar/Flex-Bison-Compiler/releases)
+[![✗](https://img.shields.io/badge/Release-v2.0.0-ffb600.svg?style=for-the-badge)](https://github.com/JuaniRaggio/ccc/releases)
 
-[![✗](https://github.com/agustin-golmar/Flex-Bison-Compiler/actions/workflows/pipeline.yaml/badge.svg?branch=production)](https://github.com/agustin-golmar/Flex-Bison-Compiler/actions/workflows/pipeline.yaml)
+[![✗](https://github.com/agustin-golmar/Flex-Bison-Compiler/actions/workflows/pipeline.yaml/badge.svg?branch=production)](https://github.com/JuaniRaggio/ccc/actions/workflows/pipeline.yaml)
 
 # Flex-Bison-Compiler
 
@@ -94,9 +94,3 @@ To trigger an automatic integration on every push or PR (_Pull Request_), you mu
 | `Artifact and log retention`                               | `30 days`                                           |
 | `Fork pull request workflows from outside collaborators`   | `Require approval for all outside collaborators`    |
 | `Workflow permissions`                                     | `Read repository contents and packages permissions` |
-
-## Recommended Extensions
-
-* [C/C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools)
-* [CMake Tools](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cmake-tools)
-* [Yash](https://marketplace.visualstudio.com/items?itemName=daohong-emilio.yash)
