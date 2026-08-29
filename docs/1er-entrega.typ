@@ -131,9 +131,12 @@ El compilador soporta las siguientes construcciones del lenguaje C:
 - Expresiones logicas y de comparacion: `&&`, `||`, `!`, `==`, `!=`, `<`, `>`, `<=`, `>=`
 - Estructuras de control: `if`/`else`, `for`, `while`
 - Funciones con parametros y valor de retorno (cada funcion se traduce a un modulo Verilog independiente)
+- Punteros como parametros de funcion con qualifiers de aliasing: `unique` (default, garantia de no-aliasing) y `aliased` (puede solaparse con otro puntero)
 - Anotacion `__parallel` para marcar bloques que el programador garantiza como independientes
 
-No se soportan: punteros, memoria dinamica, recursion, tipos de punto flotante, ni llamadas a funciones de biblioteca estandar.
+No se soportan: memoria dinamica, recursion, tipos de punto flotante, ni llamadas a funciones de biblioteca estandar.
+
+Los punteros son validos unicamente como parametros de funcion. Dentro del cuerpo de una funcion no se pueden declarar punteros locales ni hacer aritmetica de punteros mas alla de indexacion de arreglos. Por defecto todos los punteros son `unique`: el compilador asume no-aliasing y puede paralelizar operaciones sobre ellos. Si el programador necesita expresar que dos punteros pueden apuntar a la misma memoria, debe anotarlos con `aliased`, lo que deshabilita la paralelizacion automatica entre esas variables.
 
 = Construcciones
 
@@ -148,6 +151,23 @@ int32_t suma(int32_t a, int32_t b) {
     return a + b;
 }
 ```
+
+=== Punteros con qualifier de aliasing
+
+Los punteros solo son validos como parametros de funcion. El qualifier va entre el `*` y el nombre del parametro, consistente con como C trata `const` y `restrict`.
+
+`unique` es el default e indica que el compilador puede asumir que ese puntero no se solapa con ningun otro parametro. `aliased` desactiva esa garantia.
+
+```c
+// unique es el default, estas dos firmas son equivalentes
+void escalar(int32_t * unique salida, int32_t * unique entrada, int32_t factor);
+void escalar(int32_t *salida, int32_t *entrada, int32_t factor);
+
+// aliased: el compilador no puede asumir que salida != entrada
+void in_place(int32_t * aliased salida, int32_t *entrada, int32_t factor);
+```
+
+El compilador detecta en el call site los casos obvios de aliasing (pasar el mismo simbolo dos veces a parametros `unique`) y emite un error.
 
 === Bloque paralelo
 
