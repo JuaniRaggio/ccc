@@ -1,0 +1,19 @@
+================================================================================
+Potenciales ideas para el proyecto
+================================================================================
+
+
+- Lenguaje de programacion especializado en sistemas de control y tunning de 
+  PIDs
+
+
+- Traductor de C a SystemsVerilog
+
+
+- Agregarle features de seguridad a C sin sacarle tanta libertad al programador
+  esto quizas seria agregarle directivas que permitan decir "una vez que te vas
+  de este scope, libera estos recursos"
+
+
+- Agregarle un borrow checker a C como el de rust con checks de overflow, etc.
+
