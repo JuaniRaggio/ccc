@@ -111,6 +111,7 @@
   [Manuel], [Blacker], [], [],
 )]
 
+#align(center)[Link al repositorio: #link("https://github.com/JuaniRaggio/ccc")]
 
 = Dominio
 
