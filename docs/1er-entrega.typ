@@ -453,3 +453,61 @@ Un bucle `for` con un acumulador requiere estado entre ciclos de clock. El compi
   ]
 )
 
+== Hardware parametrizable con `constexpr`
+
+Una funcion `constexpr` calcula una lookup table de potencias de dos en tiempo de compilacion. El compilador evalua `potencia` completamente antes de generar hardware: el arreglo `LUT` se convierte en un `localparam` con valores literales y la funcion `potencia` no genera ningun modulo. El bucle usa `N` como limite, que al ser `constexpr` es aceptado y sintetizado como FSM estatica.
+
+#grid(
+  columns: (1fr, 1fr),
+  gutter: 1em,
+  [
+    *Entrada (C)*
+    ```c
+    constexpr int32_t N = 4;
+
+    constexpr int32_t potencia(
+        int32_t base,
+        int32_t exp
+    ) {
+        int32_t r = 1;
+        for (int32_t i = 0; i < exp; i++)
+            r *= base;
+        return r;
+    }
+
+    constexpr int32_t LUT[N] = {
+        potencia(2, 0),
+        potencia(2, 1),
+        potencia(2, 2),
+        potencia(2, 3),
+    };
+
+    int32_t buscar(int32_t idx) {
+        return LUT[idx];
+    }
+    ```
+  ],
+  [
+    *Salida (SystemVerilog)*
+    ```verilog
+    // potencia y LUT resueltos en
+    // tiempo de compilacion.
+    // No se genera hardware para ellos.
+
+    localparam int N = 4;
+    localparam int LUT [0:3] = '{
+        1, 2, 4, 8
+    };
+
+    module buscar (
+      input  logic signed [31:0] idx,
+      output logic signed [31:0] out
+    );
+      always_comb begin
+        out = LUT[idx];
+      end
+    endmodule
+    ```
+  ]
+)
+
