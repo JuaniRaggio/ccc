@@ -135,6 +135,8 @@ El compilador soporta las siguientes construcciones del lenguaje C:
 - Referencias como parametros de funcion con qualifiers de aliasing: `unique` (default, garantia de no-aliasing) y `aliased` (puede referirse al mismo objeto que otra referencia)
 - Anotacion `__parallel` para marcar bloques que el programador garantiza como independientes
 - Builtins del lenguaje para operaciones matematicas comunes: `__abs`, `__min`, `__max`
+- Variables `constexpr`: constantes evaluadas en tiempo de compilacion, se traducen a `localparam` en SystemVerilog
+- Funciones `constexpr`: funciones evaluadas completamente en tiempo de compilacion, no generan ningun modulo de hardware
 
 No se soportan: memoria dinamica, recursion, tipos de punto flotante, ni llamadas a funciones de biblioteca estandar. Las funciones de stdlib no tienen analogo en hardware sintetizable ya que asumen la existencia de sistema operativo, heap y file descriptors. En su lugar el lenguaje provee builtins con semantica de hardware definida.
 
@@ -225,6 +227,47 @@ if (x > umbral) {
 }
 ```
 
+=== Variables y funciones `constexpr`
+
+Las variables `constexpr` son constantes evaluadas en tiempo de compilacion. Se traducen a `localparam` en SystemVerilog y pueden usarse como limites de bucles, tamaños de arreglos o cualquier lugar donde el hardware requiere un valor estatico.
+
+```c
+constexpr int32_t N        = 8;
+constexpr int32_t MAX_VAL  = (1 << N) - 1;
+constexpr int32_t TABLA[4] = {1, 2, 4, 8};
+```
+
+Las funciones `constexpr` son funciones cuya ejecucion ocurre enteramente en tiempo de compilacion. No generan ningun modulo de hardware: el compilador las evalua y sustituye el resultado como si fuera un literal. Solo pueden recibir y retornar valores `constexpr`, y su cuerpo esta restringido a las mismas construcciones del lenguaje exceptuando referencias.
+
+```c
+constexpr int32_t potencia(int32_t base, int32_t exp) {
+    int32_t r = 1;
+    for (int32_t i = 0; i < exp; i++)
+        r *= base;
+    return r;
+}
+
+constexpr int32_t LUT[4] = {
+    potencia(2, 0),
+    potencia(2, 1),
+    potencia(2, 2),
+    potencia(2, 3),
+};
+```
+
+Esto resuelve el caso de bucles con limite aparentemente dinamico: si el limite es una variable `constexpr`, el compilador lo conoce en tiempo de compilacion y puede sintetizar la FSM correctamente.
+
+```c
+constexpr int32_t N = 16;
+
+int32_t sumar(int32_t &datos) {
+    int32_t acum = 0;
+    for (int32_t i = 0; i < N; i++)  // N es constexpr: aceptado
+        acum += datos[i];
+    return acum;
+}
+```
+
 == Construcciones de salida (SystemVerilog)
 
 === Modulo
@@ -265,6 +308,8 @@ El compilador debe aceptar y traducir correctamente los siguientes programas.
   [A8], [Referencia `aliased` usada correctamente sin paralelismo], [`aliased` deshabilita paralelizacion],
   [A9], [Uso de `__abs`, `__min`, `__max` en expresion], [Builtins del lenguaje],
   [A10], [Bucle `for` con limite conocido en tiempo de compilacion], [Rango estatico, FSM o desenrollado],
+  [A11], [Variable `constexpr` usada como limite de bucle], [`constexpr`, `localparam`, rango estatico],
+  [A12], [Funcion `constexpr` usada para inicializar un arreglo `constexpr`], [Evaluacion en tiempo de compilacion],
 )
 
 == Casos de rechazo
@@ -282,7 +327,9 @@ El compilador debe rechazar los siguientes programas con un mensaje de error des
   [R3], [Llamada a `printf`, `malloc` u otra funcion de stdlib], [Funciones de biblioteca estandar no soportadas],
   [R4], [Referencia declarada como variable local (no como parametro)], [Referencias validas solo como parametros],
   [R5], [Pasar el mismo simbolo dos veces a parametros `unique`], [Aliasing detectado en call site],
-  [R6], [Bucle `for` con limite no conocido en tiempo de compilacion], [Rango dinamico no sintetizable como FSM estatica],
+  [R6], [Bucle `for` con limite que no es literal ni `constexpr`], [Rango dinamico no sintetizable como FSM estatica],
+  [R9], [Funcion `constexpr` que recibe una referencia como parametro], [Las funciones `constexpr` no pueden operar sobre referencias],
+  [R10], [Funcion `constexpr` que llama a una funcion no `constexpr`], [Solo puede llamar otras funciones `constexpr`],
   [R7], [Bloque `__parallel` con sentencias que comparten una variable escrita], [Dependencia de datos dentro del bloque paralelo],
   [R8], [Funcion sin tipo de retorno explicito], [Toda funcion debe declarar su tipo de retorno],
 )
