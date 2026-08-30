@@ -107,8 +107,8 @@
   [Nombre], [Apellido], [Legajo], [E-mail],
   [Geronimo], [Naso Rodriguez], [64177], [gnasorodriguez\@itba.edu.ar],
   [Juan Ignacio], [Garcia Vautrin Raggio], [63319], [jgarciavautrinraggi\@itba.edu.ar],
-  [Santiago], [Fernandez Pacheco], [], [],
-  [Manuel], [Blacker], [], [],
+  [Santiago], [Fernandez Pacheco], [65868], [sfernandezpacheco\@itba.edu.ar],
+  [Manuel], [Blacker], [65184], [mblacker\@itba.edu.ar],
 )]
 
 #align(center)[Link al repositorio: #link("https://github.com/JuaniRaggio/ccc")]
