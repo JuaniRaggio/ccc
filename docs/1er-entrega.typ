@@ -511,3 +511,27 @@ Una funcion `constexpr` calcula una lookup table de potencias de dos en tiempo d
   ]
 )
 
+== Rechazo: funcion `constexpr` recursiva
+
+Las funciones `constexpr` no pueden ser recursivas. La evaluacion en tiempo de compilacion requiere que el compilador pueda determinar un orden de computo finito y estatico. Una funcion recursiva no garantiza terminacion sin analisis adicional, lo que esta fuera del alcance del compilador.
+
+```c
+// ERROR: constexpr function 'factorial' is recursive
+constexpr int32_t factorial(int32_t n) {
+    if (n == 0) return 1;
+    return n * factorial(n - 1);
+}
+```
+
+El compilador rechaza este programa con un error en tiempo de compilacion. La version correcta reemplaza la recursion por un bucle iterativo, que si es valido dentro de una funcion `constexpr`:
+
+```c
+// Correcto: iterativo, terminacion garantizada
+constexpr int32_t factorial(int32_t n) {
+    int32_t r = 1;
+    for (int32_t i = 2; i <= n; i++)
+        r *= i;
+    return r;
+}
+```
+
