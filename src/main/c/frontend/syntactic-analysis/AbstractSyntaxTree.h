@@ -21,6 +21,7 @@ typedef enum AliasQualifier {
 
 typedef enum BinaryOp {
     BINOP_ADD, BINOP_SUB, BINOP_MUL,
+    BINOP_LSHIFT, BINOP_RSHIFT,
     BINOP_EQ, BINOP_NEQ,
     BINOP_LT, BINOP_GT, BINOP_LE, BINOP_GE,
     BINOP_AND, BINOP_OR
@@ -92,34 +93,48 @@ typedef struct Decl     Decl;
 typedef struct DeclList DeclList;
 typedef struct Program  Program;
 
+
+struct Expr {
+    ExprKind kind;
+    union {
+        int      intValue;
+        int      boolValue;
+        char    *name;
+        struct { BinaryOp op; Expr *left; Expr *right; } binary;
+        struct { UnaryOp  op; Expr *operand; }           unary;
+        struct { Expr *target; AssignOp op; Expr *value; } assign;
+        struct { Expr *array;  Expr *index; }            arrayAccess;
+        struct { char *name;   ExprList *args; }         call;
+        struct { IntrinsicKind kind; ExprList *args; }   intrinsic;
+        Expr *postOp;
+    };
 };
 
-enum FactorType {
-	CONSTANT,
-	EXPRESSION
+struct ExprList {
+    Expr     *expr;
+    ExprList *next;
 };
 
-struct Constant {
-	int value;
+
+struct Stmt {
+    StmtKind kind;
+    union {
+        Expr  *exprStmt;
+        struct { TypeKind type; char *name; Expr *init; } localDecl;
+        struct { Expr *condition; Stmt *thenBranch; Stmt *elseBranch; } ifStmt;
+        struct { Stmt *init; Expr *condition; Expr *update; Stmt *body; } forStmt;
+        struct { Expr *condition; Stmt *body; } whileStmt;
+        Expr      *returnExpr;
+        StmtList  *compound;
+        StmtList  *parallel;
+    };
 };
 
-struct Factor {
-	union {
-		Constant * constant;
-		Expression * expression;
-	};
-	FactorType type;
+struct StmtList {
+    Stmt     *stmt;
+    StmtList *next;
 };
 
-struct Expression {
-	union {
-		Factor * factor;
-		struct {
-			Expression * leftExpression;
-			Expression * rightExpression;
-		};
-	};
-	ExpressionType type;
 };
 
 struct Program {
