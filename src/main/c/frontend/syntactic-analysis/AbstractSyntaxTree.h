@@ -81,6 +81,17 @@ typedef enum DeclKind {
     DECL_CONSTEXPR_VAR,
     DECL_CONSTEXPR_ARRAY
 } DeclKind;
+
+typedef struct Expr     Expr;
+typedef struct ExprList ExprList;
+typedef struct Stmt     Stmt;
+typedef struct StmtList StmtList;
+typedef struct Param    Param;
+typedef struct ParamList ParamList;
+typedef struct Decl     Decl;
+typedef struct DeclList DeclList;
+typedef struct Program  Program;
+
 };
 
 enum FactorType {
