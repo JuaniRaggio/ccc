@@ -37,7 +37,7 @@ services:
         aliases:
           - "compiler.atlyc.itba.edu.ar"
     command: >
-      bash -c "bash src/main/bash/build.sh && bash src/main/bash/test.sh"
+      bash -c "src/main/bash/build.sh && src/main/bash/test.sh"
     pull_policy: "every_7d"
     user: "ubuntu:ubuntu"
     volumes:
