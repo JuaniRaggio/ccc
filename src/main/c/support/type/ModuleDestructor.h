@@ -1,9 +1,7 @@
-#ifndef MODULE_DESTRUCTOR_HEADER
-#define MODULE_DESTRUCTOR_HEADER
+#pragma once
 
 /**
  * The interface of a module destructor.
  */
 typedef void (*ModuleDestructor)(void);
 
-#endif

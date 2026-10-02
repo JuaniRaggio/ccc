@@ -1,5 +1,4 @@
-#ifndef ENVIRONMENT_HEADER
-#define ENVIRONMENT_HEADER
+#pragma once
 
 #include <stdbool.h>
 #include <stdlib.h>
@@ -20,4 +19,3 @@ const bool getBooleanOrDefault(const char * name, const bool defaultValue);
  */
 const char * getStringOrDefault(const char * name, const char * defaultValue);
 
-#endif

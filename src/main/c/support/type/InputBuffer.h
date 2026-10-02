@@ -1,7 +1,6 @@
-#ifndef INPUT_BUFFER_HEADER
-#define INPUT_BUFFER_HEADER
+#pragma once
 
-#include "../logging/Logger.h"
+#include "support/logging/Logger.h"
 #include "LexicalAnalyzer.h"
 #include <stdio.h>
 
@@ -15,4 +14,3 @@ typedef struct {
 	void * buffer;
 } InputBuffer;
 
-#endif

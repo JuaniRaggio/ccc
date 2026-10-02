@@ -1,4 +1,4 @@
-/*
-	A multiline comment.
-*/
-0
+/* Returns identity. */
+int32_t identity(int32_t x) {
+    return x;
+}

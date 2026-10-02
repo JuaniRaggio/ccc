@@ -1,5 +1,4 @@
-#ifndef COMPILER_STATE_HEADER
-#define COMPILER_STATE_HEADER
+#pragma once
 
 /**
  * The global state of the compiler. Should transport every data structure
@@ -25,4 +24,3 @@ typedef struct {
 	// TODO: ...
 } CompilerState;
 
-#endif

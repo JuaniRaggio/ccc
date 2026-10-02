@@ -1,5 +1,4 @@
-#ifndef STRING_HEADER
-#define STRING_HEADER
+#pragma once
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -35,4 +34,3 @@ char * escape(const char * string);
  */
 char * indentation(const char character, const unsigned int level, const unsigned int size);
 
-#endif
