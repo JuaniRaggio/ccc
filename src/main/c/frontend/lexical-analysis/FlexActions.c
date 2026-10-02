@@ -1,13 +1,9 @@
 #include "FlexActions.h"
 
-/* MODULE INTERNAL STATE */
-
 static bool _logIgnoredLexemes = true;
-static InputBuffer * _inputBuffer = NULL;
-static LexicalAnalyzer * _lexicalAnalyzer = NULL;
-static Logger * _logger = NULL;
+static LexicalAnalyzer *_lexicalAnalyzer = NULL;
+static Logger *_logger = NULL;
 
-/** Shutdown module's internal state. */
 void _shutdownFlexActionsModule() {
 	if (_logger != NULL) {
 		logDebugging(_logger, "Destroying module: FlexActions...");
