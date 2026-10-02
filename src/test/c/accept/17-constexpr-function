@@ -1,0 +1,19 @@
+constexpr int32_t N = 4;
+
+constexpr int32_t potencia(int32_t base, int32_t exp) {
+    int32_t r = 1;
+    for (int32_t i = 0; i < exp; i++)
+        r *= base;
+    return r;
+}
+
+constexpr int32_t LUT[N] = {
+    potencia(2, 0),
+    potencia(2, 1),
+    potencia(2, 2),
+    potencia(2, 3),
+};
+
+int32_t buscar(int32_t idx) {
+    return LUT[idx];
+}

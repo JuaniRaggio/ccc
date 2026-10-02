@@ -1,0 +1,6 @@
+void f(int32_t x, int32_t &salida) {
+    __parallel {
+        salida = x * x;
+        salida = x + 1;
+    }
+}

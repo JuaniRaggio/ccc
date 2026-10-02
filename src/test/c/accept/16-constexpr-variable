@@ -1,0 +1,9 @@
+constexpr int32_t N = 8;
+constexpr int32_t MAX_VAL = (1 << N) - 1;
+
+int32_t sumar(int32_t datos[N]) {
+    int32_t acum = 0;
+    for (int32_t i = 0; i < N; i++)
+        acum += datos[i];
+    return acum;
+}

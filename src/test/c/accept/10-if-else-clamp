@@ -1,0 +1,6 @@
+int32_t clamp(int32_t x, int32_t tope) {
+    if (x > tope)
+        return tope;
+    else
+        return x;
+}

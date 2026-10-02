@@ -1,0 +1,6 @@
+int32_t sumar(int32_t &datos, int32_t n) {
+    int32_t acum = 0;
+    for (int32_t i = 0; i < n; i++)
+        acum += datos[i];
+    return acum;
+}

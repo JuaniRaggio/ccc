@@ -1,0 +1,3 @@
+void in_place(int32_t & aliased salida, int32_t &entrada, int32_t factor) {
+    salida = entrada * factor;
+}

@@ -1,0 +1,3 @@
+void escalar(int32_t & unique salida, int32_t & unique entrada, int32_t factor) {
+    salida = entrada * factor;
+}

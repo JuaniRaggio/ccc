@@ -1,0 +1,6 @@
+void procesar(int32_t x, int32_t &cuadrado, int32_t &absoluto) {
+    __parallel {
+        cuadrado = x * x;
+        absoluto = __abs(x);
+    }
+}

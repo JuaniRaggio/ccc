@@ -1,0 +1,5 @@
+int32_t duplicar(int32_t x) {
+    return x * 2;
+}
+
+constexpr int32_t N = duplicar(4);

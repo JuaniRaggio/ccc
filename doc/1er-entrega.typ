@@ -19,7 +19,7 @@
     #grid(
       columns: (1fr, 1fr),
       align: (left, right),
-      [Raggio · Naso Rodriguez · Fernandez Pacheco · Blacker],
+      [Raggio · Naso Rodríguez · Fernández Pacheco · Blacker],
       [#datetime.today().display("[day]/[month]/[year]")]
     )
     #line(length: 100%, stroke: 0.5pt + gray)
@@ -30,7 +30,7 @@
     #line(length: 100%, stroke: 0.5pt + gray)
     #v(0.2em)
     #align(center)[
-      Pagina #counter(page).display() / #counter(page).final().first()
+      Página #counter(page).display() / #counter(page).final().first()
     ]
   ]
 )
@@ -50,11 +50,20 @@
 )
 
 #set heading(numbering: "1.1")
-#show heading.where(level: 1): set text(size: 16pt, weight: "bold")
-#show heading.where(level: 2): set text(size: 14pt, weight: "bold")
-#show heading.where(level: 3): set text(size: 12pt, weight: "bold")
-
-#show heading: it => {
+#show heading.where(level: 1): it => {
+  set text(size: 16pt, weight: "bold", hyphenate: false)
+  v(0.5em)
+  it
+  v(0.3em)
+}
+#show heading.where(level: 2): it => {
+  set text(size: 14pt, weight: "bold", hyphenate: false)
+  v(0.5em)
+  it
+  v(0.3em)
+}
+#show heading.where(level: 3): it => {
+  set text(size: 12pt, weight: "bold", hyphenate: false)
   v(0.5em)
   it
   v(0.3em)
@@ -78,18 +87,22 @@
 )
 
 #show link: underline
+
+#set figure(supplement: "Figura")
+#show figure.where(kind: table): set figure(supplement: "Tabla")
+
 // ====================================
 // PORTADA
 // ====================================
 
 #align(center)[
   #v(1em)
-  #text(size: 24pt, weight: "bold")[Automatas, Teoria de Lenguajes y Compiladores]
+  #text(size: 24pt, weight: "bold")[Autómatas, Teoría de Lenguajes y Compiladores]
   #v(0.5em)
-  #text(size: 18pt)[Trabajo Practico]
+  #text(size: 18pt)[Trabajo Práctico]
   #v(0.5em)
   #text(size: 12pt, fill: gray)[
-    Primera Entrega -- Diseño del Lenguaje \
+    Primera Entrega: Diseño del Lenguaje \
     #datetime.today().display("[day]/[month]/[year]")
   ]
   #v(1em)
@@ -104,51 +117,53 @@
 #align(center)[#table(
   columns: 4,
   fill: (_, row) => if row == 0 { luma(220) } else { white },
-  [Nombre], [Apellido], [Legajo], [E-mail],
-  [Geronimo], [Naso Rodriguez], [64177], [gnasorodriguez\@itba.edu.ar],
-  [Juan Ignacio], [Garcia Vautrin Raggio], [63319], [jgarciavautrinraggi\@itba.edu.ar],
-  [Santiago], [Fernandez Pacheco], [65868], [sfernandezpacheco\@itba.edu.ar],
+  [Nombres], [Apellidos], [Legajo], [E-mail],
+  [Gerónimo], [Naso Rodríguez], [64177], [gnasorodriguez\@itba.edu.ar],
+  [Juan Ignacio], [García Vautrin Raggio], [63319], [jgarciavautrinraggi\@itba.edu.ar],
+  [Santiago], [Fernández Pacheco], [65868], [sfernandezpacheco\@itba.edu.ar],
   [Manuel], [Blacker], [65184], [mblacker\@itba.edu.ar],
 )]
 
-#align(center)[Link al repositorio: #link("https://github.com/JuaniRaggio/ccc")]
+#align(center)[Repositorio: #link("https://github.com/JuaniRaggio/ccc")]
 
 = Dominio
 
-El proyecto consiste en un compilador que traduce un subconjunto de C a SystemVerilog sintetizable, con enfasis en la deteccion y explotacion de paralelismo a nivel de hardware. El objetivo no es solo traducir sintaxis, sino analizar dependencias de datos entre operaciones y generar hardware paralelo cuando las operaciones son independientes entre si.
+El proyecto consiste en un compilador que traduce un lenguaje derivado de C a SystemVerilog (IEEE 1800) sintetizable, con énfasis en la detección y explotación del paralelismo inherente al hardware. El objetivo no es solo traducir sintaxis, sino analizar dependencias de datos entre operaciones y generar hardware que aproveche la naturaleza paralela de los circuitos digitales.
 
-El dominio de aplicacion es la sintesis de alto nivel (High-Level Synthesis): el programador describe su algoritmo en C, un lenguaje secuencial que ya conoce, y el compilador se encarga de determinar que partes pueden ejecutarse en paralelo en hardware real (FPGAs o ASICs). Esto elimina la necesidad de escribir Verilog a mano, que es considerablemente mas verboso y requiere pensar directamente en terminos de ciclos de clock, registros y señales.
+El lenguaje de entrada no es un subconjunto estricto de C sino un derivado que toma prestadas algunas construcciones de C++ (como las referencias con `&`) e introduce anotaciones propias (`__parallel`, `unique`, `aliased`) y el mecanismo `constexpr` para evaluación en tiempo de compilación. El foco está en el subconjunto imperativo: no se soporta orientación a objetos ni manejo de excepciones.
 
-El compilador acepta como entrada un archivo `.c` con anotaciones opcionales y produce como salida un modulo SystemVerilog sintetizable con su correspondiente testbench.
+El dominio de aplicación es la síntesis de alto nivel (High-Level Synthesis, HLS): el programador describe su algoritmo en un lenguaje imperativo familiar y el compilador genera un módulo de SystemVerilog que puede sintetizarse en hardware real. Esto elimina la necesidad de escribir SystemVerilog a mano, que requiere pensar directamente en términos de ciclos de reloj, registros y señales.
 
-== Alcance del subconjunto de C soportado
+El compilador acepta como entrada un archivo fuente y produce como salida un módulo SystemVerilog sintetizable orientado a FPGAs (Field-Programmable Gate Arrays, circuitos integrados reprogramables en campo) o ASICs (Application-Specific Integrated Circuits, circuitos integrados de propósito específico).
 
-El compilador soporta las siguientes construcciones del lenguaje C:
+== Alcance del lenguaje de entrada
 
-- Tipos enteros con ancho de bits explicito: `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t`
+El compilador soporta las siguientes construcciones:
+
+- Tipos enteros con ancho de bits explícito: `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t`
 - Tipo booleano: `bool`
-- Arreglos unidimensionales de tipos enteros
-- Expresiones aritmeticas: `+`, `-`, `*`
-- Expresiones logicas y de comparacion: `&&`, `||`, `!`, `==`, `!=`, `<`, `>`, `<=`, `>=`
+- Arreglos unidimensionales de tipos enteros con tamaño estático
+- Expresiones aritméticas: `+`, `-`, `*`
+- Expresiones lógicas y de comparación: `&&`, `||`, `!`, `==`, `!=`, `<`, `>`, `<=`, `>=`
 - Estructuras de control: `if`/`else`, `for`, `while`
-- Funciones con parametros y valor de retorno (cada funcion se traduce a un modulo Verilog independiente)
-- Referencias como parametros de funcion con qualifiers de aliasing: `unique` (default, garantia de no-aliasing) y `aliased` (puede referirse al mismo objeto que otra referencia)
-- Anotacion `__parallel` para marcar bloques que el programador garantiza como independientes
-- Builtins del lenguaje para operaciones matematicas comunes: `__abs`, `__min`, `__max`
-- Variables `constexpr`: constantes evaluadas en tiempo de compilacion, se traducen a `localparam` en SystemVerilog
-- Funciones `constexpr`: funciones evaluadas completamente en tiempo de compilacion, no generan ningun modulo de hardware
+- Funciones con parámetros y valor de retorno (cada función se traduce a un módulo SystemVerilog independiente)
+- Referencias como parámetros de función con calificadores de aliasing: `unique` (predeterminado) y `aliased`
+- Anotación `__parallel` para marcar bloques de sentencias independientes
+- Funciones intrínsecas del compilador: `__abs`, `__min`, `__max`
+- Variables `constexpr`: constantes evaluadas en tiempo de compilación
+- Funciones `constexpr`: funciones evaluadas completamente en tiempo de compilación
 
-No se soportan: memoria dinamica, recursion, tipos de punto flotante, ni llamadas a funciones de biblioteca estandar. Las funciones de stdlib no tienen analogo en hardware sintetizable ya que asumen la existencia de sistema operativo, heap y file descriptors. En su lugar el lenguaje provee builtins con semantica de hardware definida.
+No se soportan: memoria dinámica, recursión, tipos de punto flotante, ni llamadas a funciones de la biblioteca estándar de C. La biblioteca estándar no tiene análogo en hardware sintetizable ya que asume la existencia de sistema operativo, heap y descriptores de archivo. Las funciones intrínsecas del compilador reemplazan las operaciones matemáticas más comunes con equivalentes directamente sintetizables.
 
-Las referencias son validas unicamente como parametros de funcion. A diferencia de los punteros no pueden ser nulas ni reasignadas, lo que elimina toda una clase de errores que no tienen sentido en hardware sintetizable: en hardware una referencia modela una conexion de cable que siempre existe. Por defecto todas las referencias son `unique`: el compilador asume no-aliasing y puede paralelizar operaciones sobre ellas. Si el programador necesita expresar que dos referencias pueden referirse al mismo objeto, debe anotarlas con `aliased`, lo que deshabilita la paralelizacion automatica entre esas variables.
+Las referencias son válidas únicamente como parámetros de función. A diferencia de los punteros de C, no pueden ser nulas ni reasignadas. El concepto de aliasing y los calificadores asociados se definen en la @sec-refs.
 
 = Construcciones
 
-== Construcciones de entrada (C)
+== Construcciones de entrada
 
-=== Declaracion de funcion
+=== Declaración de función <sec-funcion>
 
-Cada funcion de nivel superior se traduce a un modulo SystemVerilog independiente. Los parametros se convierten en puertos de entrada y el valor de retorno en un puerto de salida.
+Cada función de nivel superior se traduce a un módulo SystemVerilog independiente. Los parámetros se convierten en puertos de entrada y el valor de retorno en un puerto de salida.
 
 ```c
 int32_t suma(int32_t a, int32_t b) {
@@ -156,36 +171,39 @@ int32_t suma(int32_t a, int32_t b) {
 }
 ```
 
-=== Referencias con qualifier de aliasing
+=== Referencias y aliasing <sec-refs>
 
-Las referencias son validas unicamente como parametros de funcion. El qualifier va entre el `&` y el nombre del parametro, consistente con como C trata `const`.
+El _aliasing_ ocurre cuando dos o más nombres distintos refieren al mismo objeto en memoria. En C estándar, dos punteros pueden ser _aliased_ (apuntar al mismo objeto) sin que el compilador lo sepa, lo cual impide analizar dependencias de datos y por ende impide paralelizar de forma segura operaciones sobre ellos.
 
-`unique` es el default e indica que el compilador puede asumir que esa referencia no se solapa con ninguna otra. `aliased` desactiva esa garantia. Al no poder ser nulas, el compilador no necesita emitir chequeos de null, lo que simplifica el hardware generado.
+El lenguaje usa referencias en lugar de punteros (tomando la sintaxis de C++) y agrega calificadores explícitos de aliasing. El calificador va entre el `&` y el nombre del parámetro, en línea con cómo C trata `const`. `unique` es el predeterminado e indica que la referencia no se solapa con ninguna otra. `aliased` desactiva esa garantía.
+
+Esta decisión también mejora la seguridad respecto a C estándar: los chequeos de `NULL` generan ramas adicionales que en hardware se traducen en lógica extra y ciclos potencialmente desperdiciados. Con referencias, la garantía de no-nulidad es estática y verificada en tiempo de compilación.
 
 ```c
-// unique es el default, estas dos firmas son equivalentes
-void escalar(int32_t &unique salida, int32_t &unique entrada, int32_t factor);
+// unique es el predeterminado; estas dos firmas son equivalentes
+void escalar(int32_t & unique salida, int32_t & unique entrada, int32_t factor);
 void escalar(int32_t &salida, int32_t &entrada, int32_t factor);
 
 // aliased: el compilador no puede asumir que salida != entrada
-void in_place(int32_t &aliased salida, int32_t &entrada, int32_t factor);
+void in_place(int32_t & aliased salida, int32_t &entrada, int32_t factor);
 ```
 
-El compilador detecta en el call site los casos obvios de aliasing (pasar el mismo simbolo dos veces a parametros `unique`) y emite un error.
+El compilador detecta en el sitio de llamada los casos obvios de aliasing (pasar el mismo símbolo dos veces a parámetros `unique`) y emite un error.
 
-Esta decision representa una mejora significativa respecto a C estandar. En C, cualquier puntero puede ser `NULL` y el programador es responsable de verificarlo antes de cada uso. Esos chequeos generan branches adicionales que en hardware se traducen en logica extra y potenciales ciclos de clock desperdiciados. Al usar referencias, la garantia de no-nulidad es estatica y verificada en tiempo de compilacion, por lo que el hardware generado no contiene ninguna logica de validacion de direcciones.
+=== Funciones intrínsecas del compilador <sec-builtins>
 
-=== Builtins del lenguaje
+Las funciones intrínsecas no pertenecen a ninguna biblioteca: el compilador las traduce directamente a la lógica de hardware correspondiente durante la compilación, sin generar una llamada a función. Esto es análogo a las _primitivas_ de otros lenguajes o a las `__builtin_*` de GCC.
 
-El lenguaje no soporta llamadas a funciones de biblioteca estandar porque estas asumen la existencia de sistema operativo, heap y file descriptors, ninguno de los cuales existe en hardware sintetizable. En su lugar se proveen builtins con semantica de hardware definida por el compilador:
-
-#table(
-  columns: (auto, 1fr, 1fr),
-  fill: (_, row) => if row == 0 { luma(220) } else { white },
-  [*Builtin*], [*Descripcion*], [*Hardware generado*],
-  [`__abs(x)`], [Valor absoluto], [Logica combinacional],
-  [`__min(x, y)`], [Minimo entre dos valores], [Comparador + multiplexor],
-  [`__max(x, y)`], [Maximo entre dos valores], [Comparador + multiplexor],
+#figure(
+  caption: [Funciones intrínsecas del compilador y el hardware que generan.],
+  table(
+    columns: (auto, 1fr, 1fr),
+    fill: (_, row) => if row == 0 { luma(220) } else { white },
+    [*Función*], [*Descripción*], [*Hardware generado*],
+    [`__abs(x)`], [Valor absoluto], [Lógica combinacional],
+    [`__min(x, y)`], [Mínimo entre dos valores], [Comparador + multiplexor],
+    [`__max(x, y)`], [Máximo entre dos valores], [Comparador + multiplexor],
+  )
 )
 
 ```c
@@ -194,9 +212,11 @@ int32_t normalizar(int32_t x, int32_t tope) {
 }
 ```
 
-=== Bloque paralelo
+=== Bloque `__parallel` <sec-parallel>
 
-La anotacion `__parallel` indica al compilador que las sentencias dentro del bloque no tienen dependencias entre si y pueden sintetizarse como logica combinacional concurrente.
+El bloque `__parallel` indica al compilador que las sentencias contenidas no tienen dependencias de datos entre sí y pueden sintetizarse como lógica combinacional independiente dentro del mismo ciclo de reloj.
+
+Es importante distinguir esta semántica de los hilos de software: en hardware, el paralelismo es inherente a la naturaleza de los circuitos. Una señal se propaga simultáneamente por todos los conductores conectados a ella sin coordinación explícita. El bloque `__parallel` no invoca procesos concurrentes; le indica al compilador que ambas operaciones son independientes y pueden por ende pertenecer al mismo ciclo de reloj como bloques `always_comb` separados, en lugar de secuenciarse en una FSM (Finite State Machine, Máquina de Estados Finitos).
 
 ```c
 __parallel {
@@ -205,9 +225,11 @@ __parallel {
 }
 ```
 
-=== Bucle `for` con rango estatico
+=== Bucle `for` con rango estático <sec-for>
 
-Los bucles `for` con limites conocidos en tiempo de compilacion se pueden desenrollar o sintetizar como maquinas de estados finitos (FSM) con pipeline.
+Los bucles `for` cuyos límites son literales o expresiones `constexpr` se sintetizan como FSMs o se desenrollan completamente. Un bucle cuyo límite no sea estático es rechazado, ya que no es posible generar una FSM de tamaño fijo para él.
+
+Una FSM modela la ejecución del bucle como un circuito que avanza de estado en estado con cada flanco de reloj. En cada estado se procesa un elemento del arreglo y se incrementa el índice hasta alcanzar el límite, momento en el que se transiciona al estado final. El _pipeline_ de una FSM es la técnica de superponer etapas de distintas iteraciones en ciclos de reloj consecutivos para aumentar el rendimiento.
 
 ```c
 for (int32_t i = 0; i < 8; i++) {
@@ -215,9 +237,9 @@ for (int32_t i = 0; i < 8; i++) {
 }
 ```
 
-=== Condicional `if`/`else`
+=== Condicional `if`/`else` <sec-if>
 
-Se traduce a un multiplexor en logica combinacional o a una transicion de estado en una FSM.
+Se traduce a un multiplexor en lógica combinacional (sin estado) o a una transición de estado en una FSM cuando aparece dentro de un bucle secuencial.
 
 ```c
 if (x > umbral) {
@@ -227,9 +249,11 @@ if (x > umbral) {
 }
 ```
 
-=== Variables y funciones `constexpr`
+=== Variables y funciones `constexpr` <sec-constexpr>
 
-Las variables `constexpr` son constantes evaluadas en tiempo de compilacion. Se traducen a `localparam` en SystemVerilog y pueden usarse como limites de bucles, tamaños de arreglos o cualquier lugar donde el hardware requiere un valor estatico.
+Las variables `constexpr` son constantes evaluadas en tiempo de compilación. Se traducen a `localparam` en SystemVerilog y pueden usarse en cualquier lugar donde el hardware requiere un valor estático: límites de bucles, tamaños de arreglos, inicializadores.
+
+La semántica es inductiva: una expresión `constexpr` válida es un literal entero (caso base), o una expresión formada exclusivamente por operadores aritméticos y lógicos sobre otras expresiones `constexpr` (paso inductivo). Las funciones `constexpr` extienden esto permitiendo cómputos iterativos en tiempo de compilación.
 
 ```c
 constexpr int32_t N        = 8;
@@ -237,7 +261,7 @@ constexpr int32_t MAX_VAL  = (1 << N) - 1;
 constexpr int32_t TABLA[4] = {1, 2, 4, 8};
 ```
 
-Las funciones `constexpr` son funciones cuya ejecucion ocurre enteramente en tiempo de compilacion. No generan ningun modulo de hardware: el compilador las evalua y sustituye el resultado como si fuera un literal. Solo pueden recibir y retornar valores `constexpr`, y su cuerpo esta restringido a las mismas construcciones del lenguaje exceptuando referencias.
+Las funciones `constexpr` se evalúan completamente en tiempo de compilación y no generan ningún módulo de hardware. Solo pueden recibir y retornar valores `constexpr`, no pueden recibir referencias, y solo pueden llamar a otras funciones `constexpr`. No pueden ser recursivas: la terminación debe ser garantizable estáticamente mediante un bucle con límite `constexpr`.
 
 ```c
 constexpr int32_t potencia(int32_t base, int32_t exp) {
@@ -246,292 +270,300 @@ constexpr int32_t potencia(int32_t base, int32_t exp) {
         r *= base;
     return r;
 }
-
-constexpr int32_t LUT[4] = {
-    potencia(2, 0),
-    potencia(2, 1),
-    potencia(2, 2),
-    potencia(2, 3),
-};
-```
-
-Esto resuelve el caso de bucles con limite aparentemente dinamico: si el limite es una variable `constexpr`, el compilador lo conoce en tiempo de compilacion y puede sintetizar la FSM correctamente.
-
-```c
-constexpr int32_t N = 16;
-
-int32_t sumar(int32_t &datos) {
-    int32_t acum = 0;
-    for (int32_t i = 0; i < N; i++)  // N es constexpr: aceptado
-        acum += datos[i];
-    return acum;
-}
 ```
 
 == Construcciones de salida (SystemVerilog)
 
-=== Modulo
+El lenguaje de salida es SystemVerilog (IEEE 1800), el sucesor de Verilog (IEEE 1364). A diferencia de Verilog, SystemVerilog distingue explícitamente entre lógica combinacional (`always_comb`) y secuencial (`always_ff`), lo que hace al código generado más legible y permite que las herramientas de síntesis detecten errores de diseño más fácilmente.
 
-Cada funcion C se convierte en un modulo con puertos `clk`, `rst`, `start`, `done`, los parametros como entradas y el retorno como salida.
+=== Módulo
+
+Cada función del lenguaje de entrada se convierte en un módulo SystemVerilog con puertos `clk`, `rst`, `start`, `done`, los parámetros como entradas y el retorno como salida.
 
 === `always_comb`
 
-Para expresiones puramente combinacionales sin estado: asignaciones directas, operaciones aritmeticas simples, multiplexores.
+Para expresiones puramente combinacionales sin estado: asignaciones directas, operaciones aritméticas, multiplexores generados por condicionales.
 
 === `always_ff`
 
-Para logica secuencial: bucles que requieren multiples ciclos, acumuladores, FSMs de control.
+Para lógica secuencial: bucles que requieren múltiples ciclos de reloj, acumuladores, FSMs de control.
 
-=== Bloques `always` paralelos
+=== Bloques `always_comb` en paralelo
 
-Cuando el compilador detecta (o el programador anota con `__parallel`) que dos computos son independientes, genera dos bloques `always_comb` separados que el sintetizador ejecuta en paralelo en hardware.
+Cuando el compilador detecta (o el programador declara con `__parallel`) que dos cómputos son independientes, genera dos bloques `always_comb` separados. Dado que ambos son lógica combinacional, la señal de entrada se propaga simultáneamente a ambos en el mismo ciclo de reloj sin necesidad de coordinación.
 
 = Casos de Prueba
 
-== Casos de aceptacion
+== Casos de aceptación
 
 El compilador debe aceptar y traducir correctamente los siguientes programas.
 
-#v(0.5em)
-
-#table(
-  columns: (auto, 1fr, 1fr),
-  fill: (_, row) => if row == 0 { luma(220) } else { white },
-  [*N*], [*Descripcion*], [*Construccion cubierta*],
-  [A1], [Suma de dos enteros de 32 bits], [Expresion aritmetica, `always_comb`],
-  [A2], [Clasificacion de un valor respecto a un umbral], [`if`/`else`, multiplexor],
-  [A3], [Suma acumulada de un arreglo de 8 elementos], [Bucle `for`, FSM, `always_ff`],
-  [A4], [Calculo de dos funciones independientes sobre la misma entrada], [`__parallel`, bloques concurrentes],
-  [A5], [Pipeline: filtrar y luego acumular un arreglo], [Composicion de modulos, latencia],
-  [A6], [Funcion con condicional dentro de un bucle], [Combinacion de FSM y multiplexor],
-  [A7], [Dos referencias `unique` a variables distintas], [Paralelizacion correcta con `unique`],
-  [A8], [Referencia `aliased` usada correctamente sin paralelismo], [`aliased` deshabilita paralelizacion],
-  [A9], [Uso de `__abs`, `__min`, `__max` en expresion], [Builtins del lenguaje],
-  [A10], [Bucle `for` con limite conocido en tiempo de compilacion], [Rango estatico, FSM o desenrollado],
-  [A11], [Variable `constexpr` usada como limite de bucle], [`constexpr`, `localparam`, rango estatico],
-  [A12], [Funcion `constexpr` usada para inicializar un arreglo `constexpr`], [Evaluacion en tiempo de compilacion],
+#figure(
+  caption: [Casos de prueba de aceptación.],
+  table(
+    columns: (auto, 1fr, 1fr),
+    fill: (_, row) => if row == 0 { luma(220) } else { white },
+    [*N*], [*Descripción*], [*Construcción cubierta*],
+    [A1], [Suma de dos enteros de 32 bits], [Expresión aritmética, `always_comb`],
+    [A2], [Clasificación de un valor respecto a un umbral], [`if`/`else`, multiplexor],
+    [A3], [Suma acumulada de un arreglo de 8 elementos], [Bucle `for`, FSM, `always_ff`],
+    [A4], [Cálculo de dos funciones independientes sobre la misma entrada], [`__parallel`, bloques combinacionales],
+    [A5], [Pipeline: filtrar y luego acumular un arreglo], [Composición de módulos, latencia por etapas],
+    [A6], [Función con condicional dentro de un bucle], [Combinación de FSM y multiplexor],
+    [A7], [Dos referencias `unique` a variables distintas], [Paralelización correcta con `unique`],
+    [A8], [Referencia `aliased` usada correctamente sin paralelismo], [`aliased` deshabilita paralelización],
+    [A9], [Uso de `__abs`, `__min`, `__max` en expresión], [Funciones intrínsecas del compilador],
+    [A10], [Bucle `for` con límite literal], [Rango estático, FSM o desenrollado],
+    [A11], [Variable `constexpr` usada como límite de bucle], [`constexpr`, `localparam`, rango estático],
+    [A12], [Función `constexpr` usada para inicializar un arreglo `constexpr`], [Evaluación en tiempo de compilación],
+  )
 )
 
 == Casos de rechazo
 
 El compilador debe rechazar los siguientes programas con un mensaje de error descriptivo.
 
-#v(0.5em)
-
-#table(
-  columns: (auto, 1fr, 1fr),
-  fill: (_, row) => if row == 0 { luma(220) } else { white },
-  [*N*], [*Descripcion*], [*Razon del rechazo*],
-  [R1], [Funcion recursiva], [No se soporta recursion],
-  [R2], [Variable de tipo `float` o `double`], [Tipos de punto flotante no soportados],
-  [R3], [Llamada a `printf`, `malloc` u otra funcion de stdlib], [Funciones de biblioteca estandar no soportadas],
-  [R4], [Referencia declarada como variable local (no como parametro)], [Referencias validas solo como parametros],
-  [R5], [Pasar el mismo simbolo dos veces a parametros `unique`], [Aliasing detectado en call site],
-  [R6], [Bucle `for` con limite que no es literal ni `constexpr`], [Rango dinamico no sintetizable como FSM estatica],
-  [R9], [Funcion `constexpr` que recibe una referencia como parametro], [Las funciones `constexpr` no pueden operar sobre referencias],
-  [R10], [Funcion `constexpr` que llama a una funcion no `constexpr`], [Solo puede llamar otras funciones `constexpr`],
-  [R7], [Bloque `__parallel` con sentencias que comparten una variable escrita], [Dependencia de datos dentro del bloque paralelo],
-  [R8], [Funcion sin tipo de retorno explicito], [Toda funcion debe declarar su tipo de retorno],
+#figure(
+  caption: [Casos de prueba de rechazo.],
+  table(
+    columns: (auto, 1fr, 1fr),
+    fill: (_, row) => if row == 0 { luma(220) } else { white },
+    [*N*], [*Descripción*], [*Razón del rechazo*],
+    [R1], [Función recursiva], [No se soporta recursión],
+    [R2], [Variable de tipo `float` o `double`], [Tipos de punto flotante no soportados],
+    [R3], [Llamada a `printf`, `malloc` u otra función de stdlib], [Funciones de biblioteca estándar no soportadas],
+    [R4], [Referencia declarada como variable local], [Referencias válidas solo como parámetros],
+    [R5], [Pasar el mismo símbolo dos veces a parámetros `unique`], [Aliasing detectado en sitio de llamada],
+    [R6], [Bucle `for` con límite no estático], [Rango dinámico no sintetizable como FSM estática],
+    [R7], [Bloque `__parallel` con sentencias que escriben la misma variable], [Dependencia de datos dentro del bloque],
+    [R8], [Función sin tipo de retorno explícito], [Toda función debe declarar su tipo de retorno],
+    [R9], [Función `constexpr` que recibe una referencia], [Las funciones `constexpr` no operan sobre referencias],
+    [R10], [Función `constexpr` que llama a una función no `constexpr`], [Solo puede llamar otras funciones `constexpr`],
+    [R11], [Función `constexpr` recursiva], [La recursión no garantiza terminación estática],
+  )
 )
 
 = Ejemplos
 
-== Operacion combinacional simple
+== Operación combinacional con `__parallel`
 
-Dos operaciones independientes sobre la misma entrada se sintetizan en paralelo. El compilador detecta que `cuadrado` y `valor_absoluto` no comparten escrituras y genera dos bloques `always_comb` separados.
+Dos operaciones independientes sobre la misma entrada se sintetizan como lógica combinacional en el mismo ciclo de reloj. El compilador verifica que `cuadrado` y `absoluto` no comparten escrituras y genera dos bloques `always_comb` separados.
 
-#grid(
-  columns: (1fr, 1fr),
-  gutter: 1em,
-  [
-    *Entrada (C)*
-    ```c
-    __parallel {
-        cuadrado = x * x;
-        absoluto = x < 0 ? -x : x;
-    }
-    ```
-  ],
-  [
-    *Salida (SystemVerilog)*
-    ```verilog
-    always_comb begin
-        cuadrado = x * x;
-    end
+#figure(
+  caption: [Bloque `__parallel`: entrada en el lenguaje (a) y salida en SystemVerilog (b).],
+  grid(
+    columns: (1fr, 1fr),
+    gutter: 1em,
+    [
+      *(a) Entrada*
+      ```c
+      __parallel {
+          cuadrado = x * x;
+          absoluto = __abs(x);
+      }
+      ```
+    ],
+    [
+      *(b) Salida (SystemVerilog)*
+      ```verilog
+      always_comb begin
+          cuadrado = x * x;
+      end
 
-    always_comb begin
-        if (x < 0)
-            absoluto = -x;
-        else
-            absoluto = x;
-    end
-    ```
-  ]
+      always_comb begin
+          if (x < 0)
+              absoluto = -x;
+          else
+              absoluto = x;
+      end
+      ```
+    ]
+  )
 )
 
 == Condicional como multiplexor
 
-Un `if`/`else` simple sin estado se traduce directamente a logica combinacional con un multiplexor implicito.
+Un `if`/`else` sin estado se traduce a lógica combinacional con un multiplexor implícito.
 
-#grid(
-  columns: (1fr, 1fr),
-  gutter: 1em,
-  [
-    *Entrada (C)*
-    ```c
-    int32_t clamp(int32_t x, int32_t tope) {
-        if (x > tope)
-            return tope;
-        else
-            return x;
-    }
-    ```
-  ],
-  [
-    *Salida (SystemVerilog)*
-    ```verilog
-    module clamp (
-      input  logic signed [31:0] x,
-      input  logic signed [31:0] tope,
-      output logic signed [31:0] out
-    );
-      always_comb begin
-        if (x > tope)
-          out = tope;
-        else
-          out = x;
-      end
-    endmodule
-    ```
-  ]
+#figure(
+  caption: [Condicional `if`/`else`: entrada en el lenguaje (a) y salida en SystemVerilog (b).],
+  grid(
+    columns: (1fr, 1fr),
+    gutter: 1em,
+    [
+      *(a) Entrada*
+      ```c
+      int32_t clamp(int32_t x,
+                    int32_t tope) {
+          if (x > tope)
+              return tope;
+          else
+              return x;
+      }
+      ```
+    ],
+    [
+      *(b) Salida (SystemVerilog)*
+      ```verilog
+      module clamp (
+        input  logic signed [31:0] x,
+        input  logic signed [31:0] tope,
+        output logic signed [31:0] out
+      );
+        always_comb begin
+          if (x > tope)
+            out = tope;
+          else
+            out = x;
+        end
+      endmodule
+      ```
+    ]
+  )
 )
-
 
 == Bucle con acumulador (FSM)
 
-Un bucle `for` con un acumulador requiere estado entre ciclos de clock. El compilador genera una FSM con estados `IDLE`, `COMPUTE` y `DONE`.
+Un bucle `for` con acumulador requiere retener estado entre ciclos de reloj. El compilador genera una FSM con estados `IDLE`, `COMPUTE` y `DONE`.
 
-#grid(
-  columns: (1fr, 1fr),
-  gutter: 1em,
-  [
-    *Entrada (C)*
-    ```c
-    int32_t sumar(int32_t datos[8]) {
-        int32_t acum = 0;
-        for (int32_t i = 0; i < 8; i++)
-            acum += datos[i];
-        return acum;
-    }
-    ```
-  ],
-  [
-    *Salida (SystemVerilog)*
-    ```verilog
-    // FSM con estados:
-    // IDLE -> COMPUTE -> DONE
-    always_ff @(posedge clk) begin
-      case (estado)
-        IDLE: begin
-          acum  <= 0;
-          i     <= 0;
-          if (start) estado <= COMPUTE;
-        end
-        COMPUTE: begin
-          acum  <= acum + datos[i];
-          i     <= i + 1;
-          if (i == 7) estado <= DONE;
-        end
-        DONE: begin
-          done <= 1;
-          out  <= acum;
-          estado <= IDLE;
-        end
-      endcase
-    end
-    ```
-  ]
+#figure(
+  caption: [Bucle `for` acumulador: entrada en el lenguaje (a) y salida en SystemVerilog (b).],
+  grid(
+    columns: (1fr, 1fr),
+    gutter: 1em,
+    [
+      *(a) Entrada*
+      ```c
+      int32_t sumar(int32_t datos[8]) {
+          int32_t acum = 0;
+          for (int32_t i = 0; i < 8; i++)
+              acum += datos[i];
+          return acum;
+      }
+      ```
+    ],
+    [
+      *(b) Salida (SystemVerilog)*
+      ```verilog
+      // FSM: IDLE -> COMPUTE -> DONE
+      always_ff @(posedge clk) begin
+        case (estado)
+          IDLE: begin
+            acum <= 0; i <= 0;
+            if (start) estado <= COMPUTE;
+          end
+          COMPUTE: begin
+            acum  <= acum + datos[i];
+            i     <= i + 1;
+            if (i == 7) estado <= DONE;
+          end
+          DONE: begin
+            done   <= 1;
+            out    <= acum;
+            estado <= IDLE;
+          end
+        endcase
+      end
+      ```
+    ]
+  )
 )
 
 == Hardware parametrizable con `constexpr`
 
-Una funcion `constexpr` calcula una lookup table de potencias de dos en tiempo de compilacion. El compilador evalua `potencia` completamente antes de generar hardware: el arreglo `LUT` se convierte en un `localparam` con valores literales y la funcion `potencia` no genera ningun modulo. El bucle usa `N` como limite, que al ser `constexpr` es aceptado y sintetizado como FSM estatica.
+Una función `constexpr` calcula una tabla de potencias de dos en tiempo de compilación. El arreglo `LUT` se convierte en un `localparam` con valores literales y la función `potencia` no genera ningún módulo de hardware.
 
-#grid(
-  columns: (1fr, 1fr),
-  gutter: 1em,
-  [
-    *Entrada (C)*
-    ```c
-    constexpr int32_t N = 4;
+#figure(
+  caption: [Hardware parametrizable con `constexpr`: entrada en el lenguaje (a) y salida en SystemVerilog (b).],
+  grid(
+    columns: (1fr, 1fr),
+    gutter: 1em,
+    [
+      *(a) Entrada*
+      ```c
+      constexpr int32_t N = 4;
 
-    constexpr int32_t potencia(
-        int32_t base,
-        int32_t exp
-    ) {
-        int32_t r = 1;
-        for (int32_t i = 0; i < exp; i++)
-            r *= base;
-        return r;
-    }
+      constexpr int32_t potencia(
+          int32_t base,
+          int32_t exp
+      ) {
+          int32_t r = 1;
+          for (int32_t i = 0; i < exp; i++)
+              r *= base;
+          return r;
+      }
 
-    constexpr int32_t LUT[N] = {
-        potencia(2, 0),
-        potencia(2, 1),
-        potencia(2, 2),
-        potencia(2, 3),
-    };
+      constexpr int32_t LUT[N] = {
+          potencia(2, 0),
+          potencia(2, 1),
+          potencia(2, 2),
+          potencia(2, 3),
+      };
 
-    int32_t buscar(int32_t idx) {
-        return LUT[idx];
-    }
-    ```
-  ],
-  [
-    *Salida (SystemVerilog)*
-    ```verilog
-    // potencia y LUT resueltos en
-    // tiempo de compilacion.
-    // No se genera hardware para ellos.
+      int32_t buscar(int32_t idx) {
+          return LUT[idx];
+      }
+      ```
+    ],
+    [
+      *(b) Salida (SystemVerilog)*
+      ```verilog
+      // potencia y LUT: resueltos en
+      // tiempo de compilacion, sin
+      // hardware generado para ellos.
 
-    localparam int N = 4;
-    localparam int LUT [0:3] = '{
-        1, 2, 4, 8
-    };
+      localparam int N = 4;
+      localparam int LUT [0:3] = '{
+          1, 2, 4, 8
+      };
 
-    module buscar (
-      input  logic signed [31:0] idx,
-      output logic signed [31:0] out
-    );
-      always_comb begin
-        out = LUT[idx];
-      end
-    endmodule
-    ```
-  ]
+      module buscar (
+        input  logic signed [31:0] idx,
+        output logic signed [31:0] out
+      );
+        always_comb begin
+          out = LUT[idx];
+        end
+      endmodule
+      ```
+    ]
+  )
 )
 
-== Rechazo: funcion `constexpr` recursiva
+== Rechazo: función `constexpr` recursiva
 
-Las funciones `constexpr` no pueden ser recursivas. La evaluacion en tiempo de compilacion requiere que el compilador pueda determinar un orden de computo finito y estatico. Una funcion recursiva no garantiza terminacion sin analisis adicional, lo que esta fuera del alcance del compilador.
+Las funciones `constexpr` no pueden ser recursivas. La evaluación en tiempo de compilación requiere que el compilador pueda determinar un orden de cómputo finito y estático; la recursión no garantiza terminación sin análisis adicional.
 
-```c
-// ERROR: constexpr function 'factorial' is recursive
-constexpr int32_t factorial(int32_t n) {
-    if (n == 0) return 1;
-    return n * factorial(n - 1);
-}
-```
-
-El compilador rechaza este programa con un error en tiempo de compilacion. La version correcta reemplaza la recursion por un bucle iterativo, que si es valido dentro de una funcion `constexpr`:
-
-```c
-// Correcto: iterativo, terminacion garantizada
-constexpr int32_t factorial(int32_t n) {
-    int32_t r = 1;
-    for (int32_t i = 2; i <= n; i++)
-        r *= i;
-    return r;
-}
-```
-
+#figure(
+  caption: [Función `constexpr` recursiva: caso rechazado (a) y versión iterativa válida (b).],
+  grid(
+    columns: (1fr, 1fr),
+    gutter: 1em,
+    [
+      *(a) Rechazado*
+      ```c
+      // ERROR: constexpr function
+      // 'factorial' is recursive
+      constexpr int32_t factorial(
+          int32_t n
+      ) {
+          if (n == 0) return 1;
+          return n * factorial(n - 1);
+      }
+      ```
+    ],
+    [
+      *(b) Correcto: iterativo*
+      ```c
+      constexpr int32_t factorial(
+          int32_t n
+      ) {
+          int32_t r = 1;
+          for (int32_t i = 2; i <= n; i++)
+              r *= i;
+          return r;
+      }
+      ```
+    ]
+  )
+)
