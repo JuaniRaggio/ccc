@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../../support/logging/Logger.h"
-#include "../../support/type/ModuleDestructor.h"
+#include "support/logging/Logger.h"
+#include "support/type/ModuleDestructor.h"
 #include <stdbool.h>
 #include <stdlib.h>
 
