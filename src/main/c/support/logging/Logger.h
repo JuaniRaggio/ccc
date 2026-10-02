@@ -1,8 +1,7 @@
-#ifndef LOGGER_HEADER
-#define LOGGER_HEADER
+#pragma once
 
-#include "../configuration/Environment.h"
-#include "../language/String.h"
+#include "support/configuration/Environment.h"
+#include "support/language/String.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -101,4 +100,3 @@ void logInformation(const Logger * logger, const char * const format, ...);
 /** Logs at WARNING level. */
 void logWarning(const Logger * logger, const char * const format, ...);
 
-#endif

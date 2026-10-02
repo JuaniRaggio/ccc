@@ -1,5 +1,4 @@
-#ifndef TOKEN_LABEL_HEADER
-#define TOKEN_LABEL_HEADER
+#pragma once
 
 /**
  * The type of a Bison token label, that is, an identifier of a token, that
@@ -7,4 +6,3 @@
  */
 typedef signed int TokenLabel;
 
-#endif

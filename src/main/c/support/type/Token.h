@@ -1,5 +1,4 @@
-#ifndef TOKEN_HEADER
-#define TOKEN_HEADER
+#pragma once
 
 #include "FlexContext.h"
 #include "SemanticValue.h"
@@ -18,4 +17,3 @@ typedef struct {
 	unsigned int line;
 } Token;
 
-#endif

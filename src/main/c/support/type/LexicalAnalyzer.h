@@ -1,7 +1,6 @@
-#ifndef LEXICAL_ANALYZER_HEADER
-#define LEXICAL_ANALYZER_HEADER
+#pragma once
 
-#include "../logging/Logger.h"
+#include "support/logging/Logger.h"
 
 /**
  * A lexical-analyzer and its internal state.
@@ -13,4 +12,3 @@ typedef struct {
 	void * scanner;
 } LexicalAnalyzer;
 
-#endif
