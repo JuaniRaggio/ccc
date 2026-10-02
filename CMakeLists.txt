@@ -49,6 +49,9 @@ if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
 		# ...
 	)
 
+	# Expose src/main/c as root for include paths.
+	target_include_directories(Flex-Bison-Compiler PUBLIC src/main/c)
+
 	# Link final project and libraries.
 	target_link_libraries(Flex-Bison-Compiler)
 else ()

@@ -1,5 +1,4 @@
-#ifndef COMPILATION_STATUS_HEADER
-#define COMPILATION_STATUS_HEADER
+#pragma once
 
 /**
  * The general status of a compilation. Add more status codes if needed, but
@@ -33,4 +32,3 @@ typedef enum {
 	UNKNOWN_ERROR = 3
 } CompilationStatus;
 
-#endif

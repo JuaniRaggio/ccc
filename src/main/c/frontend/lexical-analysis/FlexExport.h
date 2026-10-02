@@ -1,8 +1,7 @@
-#ifndef FLEX_EXPORT_HEADER
-#define FLEX_EXPORT_HEADER
+#pragma once
 
-#include "../../support/type/FlexContext.h"
-#include "../../support/type/LexicalAnalyzer.h"
+#include "support/type/FlexContext.h"
+#include "support/type/LexicalAnalyzer.h"
 #include <stdbool.h>
 
 /**
@@ -30,4 +29,3 @@ void flexLeaveContext(LexicalAnalyzer * lexicalAnalyzer) {
 	yy_pop_state(lexicalAnalyzer->scanner);
 }
 
-#endif

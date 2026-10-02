@@ -1,0 +1,16 @@
+---
+Language: C
+BasedOnStyle: GNU
+IndentWidth: 4
+TabWidth: 4
+UseTab: ForIndentation
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+ColumnLimit: 120
+SpaceBeforeParens: ControlStatements
+PointerAlignment: Right
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+SortIncludes: false

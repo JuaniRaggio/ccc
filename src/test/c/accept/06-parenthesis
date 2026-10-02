@@ -1,1 +1,3 @@
-(87)
+int32_t grouped(int32_t a, int32_t b) {
+    return (a + b) * (a - b);
+}
