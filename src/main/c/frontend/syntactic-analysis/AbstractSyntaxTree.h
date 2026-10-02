@@ -135,19 +135,46 @@ struct StmtList {
     StmtList *next;
 };
 
+
+struct Param {
+    ParamKind      kind;
+    TypeKind       type;
+    char          *name;
+    AliasQualifier qualifier;
+    int            arraySize;
 };
+
+struct ParamList {
+    Param     *param;
+    ParamList *next;
+};
+
+struct Decl {
+    DeclKind kind;
+    union {
+        struct { TypeKind returnType; char *name; ParamList *params; Stmt *body; } func;
+        struct { TypeKind type;       char *name; Expr *init; }                   constexprVar;
+        struct { TypeKind type;       char *name; Expr *size; ExprList *init; }   constexprArray;
+    };
+};
+
+struct DeclList {
+    Decl     *decl;
+    DeclList *next;
+};
+
 
 struct Program {
-	Expression * expression;
+    DeclList *decls;
 };
 
-/**
- * Node recursive super-duper-trambolik-destructors.
- */
 
-void destroyConstant(Constant * constant);
-void destroyExpression(Expression * expression);
-void destroyFactor(Factor * factor);
-void destroyProgram(Program * program);
-
-#endif
+void destroyExpr(Expr *expr);
+void destroyExprList(ExprList *list);
+void destroyStmt(Stmt *stmt);
+void destroyStmtList(StmtList *list);
+void destroyParam(Param *param);
+void destroyParamList(ParamList *list);
+void destroyDecl(Decl *decl);
+void destroyDeclList(DeclList *list);
+void destroyProgram(Program *program);
