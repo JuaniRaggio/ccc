@@ -1,7 +1,10 @@
-%{
-
+%code requires {
 #include "support/type/TokenLabel.h"
 #include "AbstractSyntaxTree.h"
+}
+
+%{
+
 #include "BisonActions.h"
 
 void yyerror(const YYLTYPE *location, const char *message) {}
@@ -13,7 +16,7 @@ void yyerror(const YYLTYPE *location, const char *message) {}
 %define api.value.union.name SemanticValue
 %define parse.error detailed
 %locations
-%expect 2
+%expect 1
 
 %union {
     signed int     integer;
@@ -164,8 +167,8 @@ nonEmptyParamList
 param
     : type IDENTIFIER
         { $$ = ValueParamSemanticAction($1, $2); }
-    | type OPEN_BRACKET expr CLOSE_BRACKET IDENTIFIER
-        { $$ = ArrayParamSemanticAction($1, $3, $5); }
+    | type IDENTIFIER OPEN_BRACKET expr CLOSE_BRACKET
+        { $$ = ArrayParamSemanticAction($1, $4, $2); }
     | type REF IDENTIFIER
         { $$ = RefParamSemanticAction($1, QUALIFIER_UNIQUE, $3); }
     | type REF aliasQualifier IDENTIFIER
