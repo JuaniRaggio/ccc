@@ -1,0 +1,7 @@
+int32_t filtrar(int32_t x) {
+    return __max(x, 0);
+}
+
+int32_t pipeline(int32_t a, int32_t b) {
+    return filtrar(a) + filtrar(b);
+}

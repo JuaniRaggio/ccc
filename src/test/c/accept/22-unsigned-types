@@ -1,0 +1,4 @@
+uint8_t bajo(uint16_t x) {
+    uint8_t r = x;
+    return r;
+}

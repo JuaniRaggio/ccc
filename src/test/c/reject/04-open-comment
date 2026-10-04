@@ -1,2 +1,4 @@
-0
+int32_t f(int32_t x) {
+    return x;
+}
 /* An open comment that never ends...

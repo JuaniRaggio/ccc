@@ -1,0 +1,6 @@
+int32_t primero() {
+    int32_t buf[4] = {1, 2, 3, 4};
+    int32_t tmp[4];
+    tmp[0] = buf[0];
+    return tmp[0];
+}

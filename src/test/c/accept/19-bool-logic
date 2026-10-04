@@ -1,0 +1,3 @@
+bool en_rango(int32_t x, int32_t lo, int32_t hi) {
+    return !(x < lo) && x <= hi || false;
+}
