@@ -8,5 +8,7 @@ RUN apt-get update --yes \
 		cmake \
 		flex \
 		gcc \
+		iverilog \
 		make \
+		verilator \
 	&& rm --force --recursive /var/lib/apt/lists/*
