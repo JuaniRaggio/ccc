@@ -7,7 +7,9 @@
 
 #include "BisonActions.h"
 
-void yyerror(const YYLTYPE *location, const char *message) {}
+void yyerror(const YYLTYPE *location, const char *message) {
+    SyntaxErrorAction(location, message);
+}
 
 %}
 
@@ -209,6 +211,10 @@ localDeclStmt
         { $$ = LocalDeclStmtSemanticAction($1, $2, NULL); }
     | type IDENTIFIER ASSIGN expr SEMICOLON
         { $$ = LocalDeclStmtSemanticAction($1, $2, $4); }
+    | type IDENTIFIER OPEN_BRACKET expr CLOSE_BRACKET SEMICOLON
+        { $$ = LocalArrayDeclStmtSemanticAction($1, $2, $4, NULL); }
+    | type IDENTIFIER OPEN_BRACKET expr CLOSE_BRACKET ASSIGN OPEN_BRACE exprList optComma CLOSE_BRACE SEMICOLON
+        { $$ = LocalArrayDeclStmtSemanticAction($1, $2, $4, $8); }
     ;
 
 ifStmt

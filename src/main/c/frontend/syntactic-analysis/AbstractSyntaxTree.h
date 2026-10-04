@@ -120,7 +120,7 @@ struct Stmt {
     StmtKind kind;
     union {
         Expr  *exprStmt;
-        struct { TypeKind type; char *name; Expr *init; } localDecl;
+        struct { TypeKind type; char *name; Expr *arraySize; Expr *init; ExprList *initList; } localDecl;
         struct { Expr *condition; Stmt *thenBranch; Stmt *elseBranch; } ifStmt;
         struct { Stmt *init; Expr *condition; Expr *update; Stmt *body; } forStmt;
         struct { Expr *condition; Stmt *body; } whileStmt;
@@ -141,7 +141,7 @@ struct Param {
     TypeKind       type;
     char          *name;
     AliasQualifier qualifier;
-    int            arraySize;
+    Expr          *arraySize;
 };
 
 struct ParamList {

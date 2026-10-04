@@ -10,6 +10,8 @@
 
 ModuleDestructor initializeBisonActionsModule(CompilerState *compilerState);
 
+void        SyntaxErrorAction(const YYLTYPE *location, const char *message);
+
 Program    *ProgramSemanticAction(DeclList *decls);
 
 DeclList   *SingleDeclListSemanticAction(Decl *decl);
@@ -31,6 +33,7 @@ Param      *RefParamSemanticAction(TypeKind type, AliasQualifier qualifier, char
 Stmt       *CompoundStmtSemanticAction(StmtList *stmts);
 Stmt       *ExprStmtSemanticAction(Expr *expr);
 Stmt       *LocalDeclStmtSemanticAction(TypeKind type, char *name, Expr *init);
+Stmt       *LocalArrayDeclStmtSemanticAction(TypeKind type, char *name, Expr *size, ExprList *init);
 Stmt       *IfStmtSemanticAction(Expr *cond, Stmt *thenBranch, Stmt *elseBranch);
 Stmt       *ForStmtSemanticAction(Stmt *init, Expr *cond, Expr *update, Stmt *body);
 Stmt       *WhileStmtSemanticAction(Expr *cond, Stmt *body);

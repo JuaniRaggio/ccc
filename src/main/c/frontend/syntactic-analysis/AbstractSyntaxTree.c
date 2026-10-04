@@ -72,7 +72,9 @@ void destroyStmt(Stmt *stmt) {
             break;
         case STMT_LOCAL_DECL:
             free(stmt->localDecl.name);
+            destroyExpr(stmt->localDecl.arraySize);
             destroyExpr(stmt->localDecl.init);
+            destroyExprList(stmt->localDecl.initList);
             break;
         case STMT_IF:
             destroyExpr(stmt->ifStmt.condition);
@@ -114,6 +116,7 @@ void destroyStmtList(StmtList *list) {
 void destroyParam(Param *param) {
     if (param == NULL) return;
     free(param->name);
+    destroyExpr(param->arraySize);
     free(param);
 }
 
