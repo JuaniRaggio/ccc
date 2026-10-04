@@ -1,16 +1,60 @@
 [![✗](https://img.shields.io/badge/Release-v2.0.0-ffb600.svg?style=for-the-badge)](https://github.com/JuaniRaggio/ccc/releases)
 
-[![✗](https://github.com/agustin-golmar/Flex-Bison-Compiler/actions/workflows/pipeline.yaml/badge.svg?branch=production)](https://github.com/JuaniRaggio/ccc/actions/workflows/pipeline.yaml)
+[![✗](https://github.com/JuaniRaggio/ccc/actions/workflows/pipeline.yaml/badge.svg?branch=development)](https://github.com/JuaniRaggio/ccc/actions/workflows/pipeline.yaml)
 
-# Flex-Bison-Compiler
+# ccc
 
-A base compiler example, developed with Flex and Bison.
+Compilador de un lenguaje derivado de C a SystemVerilog sintetizable (HLS), desarrollado con Flex y Bison sobre la base [Flex-Bison-Compiler](https://github.com/agustin-golmar/Flex-Bison-Compiler). La especificación del lenguaje se encuentra en [`doc/1er-entrega.typ`](doc/1er-entrega.typ).
 
+* [Estado](#estado)
+* [SystemVerilog](#systemverilog)
 * [Requirements](#requirements)
 * [Configuration](#configuration)
 * [Commands](#commands)
 * [CI/CD](#cicd)
 * [Recommended Extensions](#recommended-extensions)
+
+## Estado
+
+**Stage II (Frontend)**: el analizador léxico (`FlexPatterns.l`) y sintáctico (`BisonGrammar.y`) construyen el AST completo del lenguaje (`AbstractSyntaxTree.h`). El backend (análisis semántico y generación de SystemVerilog) corresponde al Stage III.
+
+El único conflicto de la gramática es el _dangling else_ (`%expect 1`), resuelto por Bison asociando el `else` al `if` más cercano.
+
+Los siguientes casos de rechazo dependen del análisis semántico, por lo que el frontend los acepta momentáneamente (falsos positivos esperados):
+
+| Caso                                     | Validación pendiente (Stage III)                         |
+| :--------------------------------------- | :------------------------------------------------------- |
+| `reject/06-recursive-function`           | Detección de recursión en el grafo de llamadas.          |
+| `reject/11-dynamic-for-bound`            | Límite de `for` literal o `constexpr`.                   |
+| `reject/12-parallel-dependency`          | Escrituras disjuntas dentro de `__parallel`.             |
+| `reject/14-constexpr-recursive`          | Recursión en funciones `constexpr`.                      |
+| `reject/15-constexpr-with-reference`     | Funciones `constexpr` sin parámetros por referencia.     |
+| `reject/16-constexpr-calls-nonconstexpr` | Funciones `constexpr` solo llaman a otras `constexpr`.   |
+
+Nota: `reject/08-stdlib-call` hoy se rechaza léxicamente (los literales de cadena no existen en el lenguaje); en el Stage III también se rechazará por invocar una función no declarada.
+
+## SystemVerilog
+
+La imagen de Docker incluye [Verilator](https://www.veripool.org/verilator/) (v5.032) e [Icarus Verilog](https://steveicarus.github.io/iverilog/) (v12.0), para verificar y simular el código SystemVerilog que produce el compilador. Los ejemplos del informe (Figuras 1 a 4) se encuentran completos en [`doc/examples`](doc/examples), cada uno con su _testbench_:
+
+| Módulo         | Construcción                          |
+| :------------- | :------------------------------------ |
+| `procesar.sv`  | `__parallel` (bloques `always_comb`). |
+| `clamp.sv`     | `if`/`else` como multiplexor.         |
+| `sumar.sv`     | Bucle `for` como FSM (`always_ff`).   |
+| `buscar.sv`    | `constexpr` como `localparam`.        |
+
+Para verificar (_lint_) y simular todos los ejemplos, dentro del contenedor:
+
+```bash
+src/main/bash/verilog.sh
+```
+
+o un único módulo (si existe `<modulo>_tb.sv` en la misma carpeta, también se simula):
+
+```bash
+src/main/bash/verilog.sh doc/examples/sumar.sv
+```
 
 ## Requirements
 

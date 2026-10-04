@@ -90,14 +90,16 @@
 
 #set figure(supplement: "Figura")
 #show figure.where(kind: table): set figure(supplement: "Tabla")
+#show figure.caption: set text(hyphenate: false)
 
 // ====================================
 // PORTADA
 // ====================================
 
 #align(center)[
+  #set par(justify: false)
   #v(1em)
-  #text(size: 24pt, weight: "bold")[Autómatas, Teoría de Lenguajes y Compiladores]
+  #text(size: 24pt, weight: "bold", hyphenate: false)[Autómatas, Teoría de Lenguajes y Compiladores]
   #v(0.5em)
   #text(size: 18pt)[Trabajo Práctico]
   #v(0.5em)
@@ -288,7 +290,7 @@ Para expresiones puramente combinacionales sin estado: asignaciones directas, op
 
 Para lógica secuencial: bucles que requieren múltiples ciclos de reloj, acumuladores, FSMs de control.
 
-=== Bloques `always_comb` en paralelo
+=== Bloques `always_comb` independientes
 
 Cuando el compilador detecta (o el programador declara con `__parallel`) que dos cómputos son independientes, genera dos bloques `always_comb` separados. Dado que ambos son lógica combinacional, la señal de entrada se propaga simultáneamente a ambos en el mismo ciclo de reloj sin necesidad de coordinación.
 
@@ -509,11 +511,11 @@ Una función `constexpr` calcula una tabla de potencias de dos en tiempo de comp
       *(b) Salida (SystemVerilog)*
       ```verilog
       // potencia y LUT: resueltos en
-      // tiempo de compilacion, sin
+      // tiempo de compilación, sin
       // hardware generado para ellos.
 
       localparam int N = 4;
-      localparam int LUT [0:3] = '{
+      localparam int LUT [0:3] = {
           1, 2, 4, 8
       };
 
