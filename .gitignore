@@ -3,6 +3,7 @@
 # Folders.
 .DS_Store/
 /.build/
+/.ide-build/
 /.git/
 /.vs/
 /.vscode/
@@ -17,6 +18,7 @@
 .env*
 *.csproj.user
 *~
+/compile_commands.json
 
 # Application specific.
 /program
