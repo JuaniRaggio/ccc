@@ -227,6 +227,17 @@ _checkNoRecursion(Program *program) {
 
 static bool
 _checkConstexprRefParams(Program *program) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (decl->kind != DECL_CONSTEXPR_FUNC) {
+			continue;
+		}
+		for (ParamList *paramNode = decl->func.params; paramNode != NULL; paramNode = paramNode->next) {
+			if (paramNode->param->kind == PARAM_REF) {
+				return false;
+			}
+		}
+	}
 	return true;
 }
 
@@ -279,10 +290,34 @@ typedef struct {
 
 static void
 _checkBoundIdentifier(Expr *expr, void *context) {
+	ForBoundScope *scope = context;
+	if (expr->kind != EXPR_IDENTIFIER) {
+		return;
+	}
+	if (scope->inductionVar != NULL && strcmp(expr->name, scope->inductionVar) == 0) {
+		return;
+	}
+	if (_isConstexprGlobal(scope->program, expr->name)) {
+		return;
+	}
+	if (scope->inConstexprFunc && _nameInList(scope->params, scope->paramCount, expr->name)) {
+		return;
+	}
+	scope->violation = true;
 }
 
 static const char *
 _inductionVariable(Stmt *init) {
+	if (init == NULL) {
+		return NULL;
+	}
+	if (init->kind == STMT_LOCAL_DECL) {
+		return init->localDecl.name;
+	}
+	if (init->kind == STMT_EXPR && init->exprStmt != NULL && init->exprStmt->kind == EXPR_ASSIGN
+	    && init->exprStmt->assign.target != NULL && init->exprStmt->assign.target->kind == EXPR_IDENTIFIER) {
+		return init->exprStmt->assign.target->name;
+	}
 	return NULL;
 }
 
@@ -313,6 +348,11 @@ _collectAssignTargets(Expr *expr, void *context) {
 	if (expr->kind != EXPR_ASSIGN || expr->assign.target == NULL || expr->assign.target->kind != EXPR_IDENTIFIER) {
 		return;
 	}
+	if (list->count == list->capacity) {
+		list->capacity = list->capacity == 0 ? 4 : list->capacity * 2;
+		list->names = realloc(list->names, list->capacity * sizeof(char *));
+	}
+	list->names[list->count++] = expr->assign.target->name;
 }
 
 static bool
