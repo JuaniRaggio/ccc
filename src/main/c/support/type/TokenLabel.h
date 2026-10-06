@@ -5,4 +5,3 @@
  * transports the lexeme and semantic value as a whole.
  */
 typedef signed int TokenLabel;
-
