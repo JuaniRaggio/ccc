@@ -27,15 +27,36 @@ _isFunctionDecl(const Decl *decl) {
 
 static bool
 _nameInList(char **names, int count, const char *name) {
+	for (int i = 0; i < count; ++i) {
+		if (strcmp(names[i], name) == 0) {
+			return true;
+		}
+	}
+	return false;
 }
 
 static bool
 _isConstexprGlobal(Program *program, const char *name) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (decl->kind == DECL_CONSTEXPR_VAR && strcmp(decl->constexprVar.name, name) == 0) {
+			return true;
+		}
+		if (decl->kind == DECL_CONSTEXPR_ARRAY && strcmp(decl->constexprArray.name, name) == 0) {
+			return true;
+		}
+	}
 	return false;
 }
 
 static bool
 _isConstexprFunction(Program *program, const char *name) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (decl->kind == DECL_CONSTEXPR_FUNC && strcmp(decl->func.name, name) == 0) {
+			return true;
+		}
+	}
 	return false;
 }
 
@@ -69,6 +90,19 @@ _collectCallEdges(Expr *expr, void *context) {
 
 static bool
 _hasCycle(const bool *adjacency, int n, int node, int *color) {
+	color[node] = 1;
+	for (int next = 0; next < n; ++next) {
+		if (!adjacency[node * n + next]) {
+			continue;
+		}
+		if (color[next] == 1) {
+			return true;
+		}
+		if (color[next] == 0 && _hasCycle(adjacency, n, next, color)) {
+			return true;
+		}
+	}
+	color[node] = 2;
 	return false;
 }
 
