@@ -5,6 +5,8 @@ cmake_minimum_required(VERSION 3.28.3)
 # Name of the project and language to use (C, in this case).
 project(Flex-Bison-Compiler C)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Selects the best strategy according to the available compiler in the system.
 # @see https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_COMPILER_ID.html
 if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
@@ -34,6 +36,7 @@ if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
 	# The header files (*.h extension), are automatically included from the source-codes.
 	add_executable(Flex-Bison-Compiler
 		src/main/c/backend/code-generation/Generator.c
+		src/main/c/backend/semantic-analysis/SemanticAnalyzer.c
 		src/main/c/EntryPoint.c
 		src/main/c/frontend/Frontend.c
 		src/main/c/frontend/lexical-analysis/FlexActions.c
