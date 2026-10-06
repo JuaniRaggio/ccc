@@ -9,11 +9,10 @@
  * syntactic-analyzer.
  */
 typedef struct {
-	char * lexeme;
+	char *lexeme;
 	FlexContext context;
-	SemanticValue * semanticValue;
+	SemanticValue *semanticValue;
 	TokenLabel label;
 	unsigned int length;
 	unsigned int line;
 } Token;
-

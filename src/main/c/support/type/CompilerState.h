@@ -8,7 +8,7 @@ typedef struct {
 	/**
 	 * The root node of the AST.
 	 */
-	void * abstractSyntaxtTree;
+	void *abstractSyntaxtTree;
 
 	// TODO: Add a symbol table.
 	// TODO: Add an stack to handle nested scopes.
@@ -16,4 +16,3 @@ typedef struct {
 	// TODO: Add whatever you need.
 	// TODO: ...
 } CompilerState;
-

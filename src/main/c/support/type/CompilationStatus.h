@@ -31,4 +31,3 @@ typedef enum {
 	 */
 	UNKNOWN_ERROR = 3
 } CompilationStatus;
-

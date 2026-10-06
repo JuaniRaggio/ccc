@@ -8,9 +8,8 @@
  * A lexical-analyzer input buffer.
  */
 typedef struct {
-	FILE * file;
-	LexicalAnalyzer * lexicalAnalyzer;
+	FILE *file;
+	LexicalAnalyzer *lexicalAnalyzer;
 	unsigned int bufferSizeInBytes;
-	void * buffer;
+	void *buffer;
 } InputBuffer;
-

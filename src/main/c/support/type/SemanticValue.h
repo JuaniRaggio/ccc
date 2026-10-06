@@ -5,4 +5,3 @@
 #include "frontend/syntactic-analysis/BisonParser.h"
 
 typedef union SemanticValue SemanticValue;
-
