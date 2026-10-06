@@ -20,17 +20,11 @@ main(const int length, const char **arguments) {
 	for (int k = 0; k < length; ++k) {
 		logDebugging(logger, "Argument %d: \"%s\"", k, arguments[k]);
 	}
-	CompilerState compilerState = {
-		.abstractSyntaxtTree = NULL
-	};
-	ModuleDestructor moduleDestructors[] = {
-		initializeAbstractSyntaxTreeModule(),
-		initializeFlexActionsModule(lexicalAnalyzer),
-		initializeBisonActionsModule(&compilerState),
-		initializeFrontendModule(lexicalAnalyzer),
-		initializeSemanticAnalysisModule(),
-		initializeGeneratorModule()
-	};
+	CompilerState compilerState = { .abstractSyntaxtTree = NULL };
+	ModuleDestructor moduleDestructors[]
+	    = { initializeAbstractSyntaxTreeModule(),         initializeFlexActionsModule(lexicalAnalyzer),
+		    initializeBisonActionsModule(&compilerState), initializeFrontendModule(lexicalAnalyzer),
+		    initializeSemanticAnalysisModule(),           initializeGeneratorModule() };
 	CompilationStatus compilationStatus = executeSyntacticAnalysis();
 	Program *program = compilerState.abstractSyntaxtTree;
 	if (compilationStatus == SUCCEEDED) {
@@ -38,8 +32,7 @@ main(const int length, const char **arguments) {
 		// Beginning of the Backend... ------------------------------------------------------------
 		if (executeSemanticAnalysis(&compilerState)) {
 			executeGenerator(&compilerState);
-		}
-		else {
+		} else {
 			logError(logger, "The semantic-analysis phase rejects the input program.");
 			compilationStatus = FAILED;
 		}
