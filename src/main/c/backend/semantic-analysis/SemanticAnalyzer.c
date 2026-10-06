@@ -333,6 +333,34 @@ _checkForBound(Stmt *stmt, void *context) {
 
 static bool
 _checkForBounds(Program *program) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (!_isFunctionDecl(decl)) {
+			continue;
+		}
+		int paramCount = 0;
+		for (ParamList *paramNode = decl->func.params; paramNode != NULL; paramNode = paramNode->next) {
+			++paramCount;
+		}
+		char **params = paramCount > 0 ? calloc(paramCount, sizeof(char *)) : NULL;
+		int stored = 0;
+		for (ParamList *paramNode = decl->func.params; paramNode != NULL; paramNode = paramNode->next) {
+			params[stored++] = paramNode->param->name;
+		}
+		ForBoundScope scope = {
+			.program = program,
+			.inConstexprFunc = decl->kind == DECL_CONSTEXPR_FUNC,
+			.params = params,
+			.paramCount = paramCount,
+			.inductionVar = NULL,
+			.violation = false,
+		};
+		_walkStmts(decl->func.body, _checkForBound, &scope);
+		free(params);
+		if (scope.violation) {
+			return false;
+		}
+	}
 	return true;
 }
 
