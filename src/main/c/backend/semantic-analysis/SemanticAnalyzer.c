@@ -66,6 +66,40 @@ _walkExpr(Expr *expr, ExprVisitor visit, void *context) {
 	if (expr == NULL) {
 		return;
 	}
+	visit(expr, context);
+	switch (expr->kind) {
+	case EXPR_BINARY:
+		_walkExpr(expr->binary.left, visit, context);
+		_walkExpr(expr->binary.right, visit, context);
+		break;
+	case EXPR_UNARY:
+		_walkExpr(expr->unary.operand, visit, context);
+		break;
+	case EXPR_ASSIGN:
+		_walkExpr(expr->assign.target, visit, context);
+		_walkExpr(expr->assign.value, visit, context);
+		break;
+	case EXPR_ARRAY_ACCESS:
+		_walkExpr(expr->arrayAccess.array, visit, context);
+		_walkExpr(expr->arrayAccess.index, visit, context);
+		break;
+	case EXPR_CALL:
+		for (ExprList *argNode = expr->call.args; argNode != NULL; argNode = argNode->next) {
+			_walkExpr(argNode->expr, visit, context);
+		}
+		break;
+	case EXPR_INTRINSIC:
+		for (ExprList *argNode = expr->intrinsic.args; argNode != NULL; argNode = argNode->next) {
+			_walkExpr(argNode->expr, visit, context);
+		}
+		break;
+	case EXPR_POST_INC:
+	case EXPR_POST_DEC:
+		_walkExpr(expr->postOp, visit, context);
+		break;
+	default:
+		break;
+	}
 }
 
 static void
