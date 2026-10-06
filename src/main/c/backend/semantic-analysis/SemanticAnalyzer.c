@@ -19,6 +19,7 @@ initializeSemanticAnalysisModule(void) {
 }
 
 typedef void (*ExprVisitor)(Expr *expr, void *context);
+typedef void (*StmtVisitor)(Stmt *stmt, void *context);
 
 static bool
 _isFunctionDecl(const Decl *decl) {
@@ -72,73 +73,155 @@ _walkStmtExprs(Stmt *stmt, ExprVisitor visit, void *context) {
 	if (stmt == NULL) {
 		return;
 	}
+	switch (stmt->kind) {
+	case STMT_EXPR:
+		_walkExpr(stmt->exprStmt, visit, context);
+		break;
+	case STMT_LOCAL_DECL:
+		_walkExpr(stmt->localDecl.arraySize, visit, context);
+		_walkExpr(stmt->localDecl.init, visit, context);
+		for (ExprList *initNode = stmt->localDecl.initList; initNode != NULL; initNode = initNode->next) {
+			_walkExpr(initNode->expr, visit, context);
+		}
+		break;
+	case STMT_IF:
+		_walkExpr(stmt->ifStmt.condition, visit, context);
+		_walkStmtExprs(stmt->ifStmt.thenBranch, visit, context);
+		_walkStmtExprs(stmt->ifStmt.elseBranch, visit, context);
+		break;
+	case STMT_FOR:
+		_walkStmtExprs(stmt->forStmt.init, visit, context);
+		_walkExpr(stmt->forStmt.condition, visit, context);
+		_walkExpr(stmt->forStmt.update, visit, context);
+		_walkStmtExprs(stmt->forStmt.body, visit, context);
+		break;
+	case STMT_WHILE:
+		_walkExpr(stmt->whileStmt.condition, visit, context);
+		_walkStmtExprs(stmt->whileStmt.body, visit, context);
+		break;
+	case STMT_RETURN:
+		_walkExpr(stmt->returnExpr, visit, context);
+		break;
+	case STMT_COMPOUND:
+		for (StmtList *stmtNode = stmt->compound; stmtNode != NULL; stmtNode = stmtNode->next) {
+			_walkStmtExprs(stmtNode->stmt, visit, context);
+		}
+		break;
+	case STMT_PARALLEL:
+		for (StmtList *stmtNode = stmt->parallel; stmtNode != NULL; stmtNode = stmtNode->next) {
+			_walkStmtExprs(stmtNode->stmt, visit, context);
+		}
+		break;
+	}
+}
+
+static void
+_walkStmts(Stmt *stmt, StmtVisitor visit, void *context) {
+	if (stmt == NULL) {
+		return;
+	}
+	visit(stmt, context);
+	switch (stmt->kind) {
+	case STMT_IF:
+		_walkStmts(stmt->ifStmt.thenBranch, visit, context);
+		_walkStmts(stmt->ifStmt.elseBranch, visit, context);
+		break;
+	case STMT_FOR:
+		_walkStmts(stmt->forStmt.init, visit, context);
+		_walkStmts(stmt->forStmt.body, visit, context);
+		break;
+	case STMT_WHILE:
+		_walkStmts(stmt->whileStmt.body, visit, context);
+		break;
+	case STMT_COMPOUND:
+		for (StmtList *stmtNode = stmt->compound; stmtNode != NULL; stmtNode = stmtNode->next) {
+			_walkStmts(stmtNode->stmt, visit, context);
+		}
+		break;
+	case STMT_PARALLEL:
+		for (StmtList *stmtNode = stmt->parallel; stmtNode != NULL; stmtNode = stmtNode->next) {
+			_walkStmts(stmtNode->stmt, visit, context);
+		}
+		break;
+	default:
+		break;
+	}
 }
 
 typedef struct {
-	Decl **funcs;
-	int count;
-	bool *adjRow;
-} CallEdgeContext;
+	Decl **functions;
+	int functionCount;
+	bool *adjacencyRow;
+} CallGraphBuilder;
 
 static void
 _collectCallEdges(Expr *expr, void *context) {
-	CallEdgeContext *ctx = context;
+	CallGraphBuilder *graph = context;
 	if (expr->kind != EXPR_CALL) {
 		return;
+	}
+	for (int callee = 0; callee < graph->functionCount; ++callee) {
+		if (strcmp(graph->functions[callee]->func.name, expr->call.name) == 0) {
+			graph->adjacencyRow[callee] = true;
+		}
 	}
 }
 
 static bool
-_hasCycle(const bool *adjacency, int n, int node, int *color) {
-	color[node] = 1;
-	for (int next = 0; next < n; ++next) {
-		if (!adjacency[node * n + next]) {
+_hasCycle(const bool *adjacency, int functionCount, int current, int *color) {
+	color[current] = 1;
+	for (int next = 0; next < functionCount; ++next) {
+		if (!adjacency[current * functionCount + next]) {
 			continue;
 		}
 		if (color[next] == 1) {
 			return true;
 		}
-		if (color[next] == 0 && _hasCycle(adjacency, n, next, color)) {
+		if (color[next] == 0 && _hasCycle(adjacency, functionCount, next, color)) {
 			return true;
 		}
 	}
-	color[node] = 2;
+	color[current] = 2;
 	return false;
 }
 
 static bool
 _checkNoRecursion(Program *program) {
-	int count = 0;
+	int functionCount = 0;
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
 		if (_isFunctionDecl(node->decl)) {
-			++count;
+			++functionCount;
 		}
 	}
-	if (count == 0) {
+	if (functionCount == 0) {
 		return true;
 	}
-	Decl **funcs = calloc(count, sizeof(Decl *));
-	int index = 0;
+	Decl **functions = calloc(functionCount, sizeof(Decl *));
+	int stored = 0;
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
 		if (_isFunctionDecl(node->decl)) {
-			funcs[index++] = node->decl;
+			functions[stored++] = node->decl;
 		}
 	}
-	bool *adjacency = calloc((size_t)count * count, sizeof(bool));
-	for (int i = 0; i < count; ++i) {
-		CallEdgeContext ctx = { .funcs = funcs, .count = count, .adjRow = &adjacency[i * count] };
-		_walkStmtExprs(funcs[i]->func.body, _collectCallEdges, &ctx);
+	bool *adjacency = calloc((size_t)functionCount * functionCount, sizeof(bool));
+	for (int caller = 0; caller < functionCount; ++caller) {
+		CallGraphBuilder graph = {
+			.functions = functions,
+			.functionCount = functionCount,
+			.adjacencyRow = &adjacency[caller * functionCount],
+		};
+		_walkStmtExprs(functions[caller]->func.body, _collectCallEdges, &graph);
 	}
-	int *color = calloc(count, sizeof(int));
+	int *color = calloc(functionCount, sizeof(int));
 	bool cyclic = false;
-	for (int i = 0; i < count && !cyclic; ++i) {
-		if (color[i] == 0 && _hasCycle(adjacency, count, i, color)) {
+	for (int caller = 0; caller < functionCount && !cyclic; ++caller) {
+		if (color[caller] == 0 && _hasCycle(adjacency, functionCount, caller, color)) {
 			cyclic = true;
 		}
 	}
 	free(color);
 	free(adjacency);
-	free(funcs);
+	free(functions);
 	return !cyclic;
 }
 
@@ -150,49 +233,49 @@ _checkConstexprRefParams(Program *program) {
 typedef struct {
 	Program *program;
 	bool violation;
-} ConstexprCallContext;
+} ConstexprScope;
 
 static void
 _checkConstexprCall(Expr *expr, void *context) {
-	ConstexprCallContext *ctx = context;
-	if (expr->kind == EXPR_CALL && !_isConstexprFunction(ctx->program, expr->call.name)) {
-		ctx->violation = true;
+	ConstexprScope *scope = context;
+	if (expr->kind == EXPR_CALL && !_isConstexprFunction(scope->program, expr->call.name)) {
+		scope->violation = true;
 	}
 }
 
 static bool
 _checkConstexprCalls(Program *program) {
-	ConstexprCallContext ctx = { .program = program, .violation = false };
+	ConstexprScope scope = { .program = program, .violation = false };
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
 		Decl *decl = node->decl;
 		switch (decl->kind) {
 		case DECL_CONSTEXPR_VAR:
-			_walkExpr(decl->constexprVar.init, _checkConstexprCall, &ctx);
+			_walkExpr(decl->constexprVar.init, _checkConstexprCall, &scope);
 			break;
 		case DECL_CONSTEXPR_ARRAY:
-			_walkExpr(decl->constexprArray.size, _checkConstexprCall, &ctx);
-			for (ExprList *e = decl->constexprArray.init; e != NULL; e = e->next) {
-				_walkExpr(e->expr, _checkConstexprCall, &ctx);
+			_walkExpr(decl->constexprArray.size, _checkConstexprCall, &scope);
+			for (ExprList *initNode = decl->constexprArray.init; initNode != NULL; initNode = initNode->next) {
+				_walkExpr(initNode->expr, _checkConstexprCall, &scope);
 			}
 			break;
 		case DECL_CONSTEXPR_FUNC:
-			_walkStmtExprs(decl->func.body, _checkConstexprCall, &ctx);
+			_walkStmtExprs(decl->func.body, _checkConstexprCall, &scope);
 			break;
 		default:
 			break;
 		}
 	}
-	return !ctx.violation;
+	return !scope.violation;
 }
 
 typedef struct {
 	Program *program;
 	bool inConstexprFunc;
 	char **params;
-	int nParams;
+	int paramCount;
 	const char *inductionVar;
 	bool violation;
-} ForBoundContext;
+} ForBoundScope;
 
 static void
 _checkBoundIdentifier(Expr *expr, void *context) {
@@ -204,10 +287,13 @@ _inductionVariable(Stmt *init) {
 }
 
 static void
-_checkForBoundsStmt(Stmt *stmt, ForBoundContext *ctx) {
-	if (stmt == NULL) {
+_checkForBound(Stmt *stmt, void *context) {
+	ForBoundScope *scope = context;
+	if (stmt->kind != STMT_FOR) {
 		return;
 	}
+	scope->inductionVar = _inductionVariable(stmt->forStmt.init);
+	_walkExpr(stmt->forStmt.condition, _checkBoundIdentifier, scope);
 }
 
 static bool
@@ -241,15 +327,35 @@ _hasDuplicateName(NameList *list) {
 	return false;
 }
 
-static bool
-_checkParallelStmt(Stmt *stmt) {
-	if (stmt == NULL) {
-		return true;
+typedef struct {
+	bool violation;
+} ParallelScope;
+
+static void
+_checkParallelBlock(Stmt *stmt, void *context) {
+	ParallelScope *scope = context;
+	if (stmt->kind != STMT_PARALLEL) {
+		return;
 	}
+	NameList targets = { .names = NULL, .count = 0, .capacity = 0 };
+	for (StmtList *stmtNode = stmt->parallel; stmtNode != NULL; stmtNode = stmtNode->next) {
+		_walkStmtExprs(stmtNode->stmt, _collectAssignTargets, &targets);
+	}
+	if (_hasDuplicateName(&targets)) {
+		scope->violation = true;
+	}
+	free(targets.names);
 }
 
 static bool
 _checkParallelDependencies(Program *program) {
+	ParallelScope scope = { .violation = false };
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		if (_isFunctionDecl(node->decl)) {
+			_walkStmts(node->decl->func.body, _checkParallelBlock, &scope);
+		}
+	}
+	return !scope.violation;
 }
 
 bool
