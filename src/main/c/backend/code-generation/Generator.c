@@ -1,6 +1,30 @@
 #include "Generator.h"
+#include <string.h>
 
 static Logger *_logger = NULL;
+static Program *_program = NULL;
+static Expr **_callNodes = NULL;
+static int _callCount = 0;
+
+static Decl *
+_findFunctionDecl(const char *name) {
+	for (DeclList *node = _program->decls; node != NULL; node = node->next) {
+		if (node->decl->kind == DECL_FUNCTION && strcmp(node->decl->func.name, name) == 0) {
+			return node->decl;
+		}
+	}
+	return NULL;
+}
+
+static int
+_callIndex(Expr *call) {
+	for (int i = 0; i < _callCount; ++i) {
+		if (_callNodes[i] == call) {
+			return i;
+		}
+	}
+	return -1;
+}
 
 void
 _shutdownGeneratorModule() {
@@ -141,14 +165,7 @@ _emitExpr(Expr *expr) {
 		fprintf(stdout, "]");
 		break;
 	case EXPR_CALL:
-		fprintf(stdout, "%s(", expr->call.name);
-		for (ExprList *argNode = expr->call.args; argNode != NULL; argNode = argNode->next) {
-			_emitExpr(argNode->expr);
-			if (argNode->next != NULL) {
-				fprintf(stdout, ", ");
-			}
-		}
-		fprintf(stdout, ")");
+		fprintf(stdout, "__call%d", _callIndex(expr));
 		break;
 	case EXPR_INTRINSIC:
 		_emitIntrinsic(expr);
@@ -370,6 +387,133 @@ _emitPort(Param *param, bool last) {
 	fprintf(stdout, "%s\n", last ? "" : ",");
 }
 
+typedef struct {
+	Expr **items;
+	int count;
+	int capacity;
+} CallList;
+
+static void
+_callListAdd(CallList *list, Expr *call) {
+	if (list->count == list->capacity) {
+		list->capacity = list->capacity == 0 ? 4 : list->capacity * 2;
+		list->items = realloc(list->items, list->capacity * sizeof(Expr *));
+	}
+	list->items[list->count++] = call;
+}
+
+static void
+_collectCallsExpr(Expr *expr, CallList *list) {
+	if (expr == NULL) {
+		return;
+	}
+	switch (expr->kind) {
+	case EXPR_BINARY:
+		_collectCallsExpr(expr->binary.left, list);
+		_collectCallsExpr(expr->binary.right, list);
+		break;
+	case EXPR_UNARY:
+		_collectCallsExpr(expr->unary.operand, list);
+		break;
+	case EXPR_ASSIGN:
+		_collectCallsExpr(expr->assign.target, list);
+		_collectCallsExpr(expr->assign.value, list);
+		break;
+	case EXPR_ARRAY_ACCESS:
+		_collectCallsExpr(expr->arrayAccess.array, list);
+		_collectCallsExpr(expr->arrayAccess.index, list);
+		break;
+	case EXPR_CALL:
+		for (ExprList *argNode = expr->call.args; argNode != NULL; argNode = argNode->next) {
+			_collectCallsExpr(argNode->expr, list);
+		}
+		_callListAdd(list, expr);
+		break;
+	case EXPR_INTRINSIC:
+		for (ExprList *argNode = expr->intrinsic.args; argNode != NULL; argNode = argNode->next) {
+			_collectCallsExpr(argNode->expr, list);
+		}
+		break;
+	case EXPR_POST_INC:
+	case EXPR_POST_DEC:
+		_collectCallsExpr(expr->postOp, list);
+		break;
+	default:
+		break;
+	}
+}
+
+static void
+_collectCallsStmt(Stmt *stmt, CallList *list) {
+	if (stmt == NULL) {
+		return;
+	}
+	switch (stmt->kind) {
+	case STMT_EXPR:
+		_collectCallsExpr(stmt->exprStmt, list);
+		break;
+	case STMT_LOCAL_DECL:
+		_collectCallsExpr(stmt->localDecl.arraySize, list);
+		_collectCallsExpr(stmt->localDecl.init, list);
+		for (ExprList *initNode = stmt->localDecl.initList; initNode != NULL; initNode = initNode->next) {
+			_collectCallsExpr(initNode->expr, list);
+		}
+		break;
+	case STMT_IF:
+		_collectCallsExpr(stmt->ifStmt.condition, list);
+		_collectCallsStmt(stmt->ifStmt.thenBranch, list);
+		_collectCallsStmt(stmt->ifStmt.elseBranch, list);
+		break;
+	case STMT_FOR:
+		_collectCallsStmt(stmt->forStmt.init, list);
+		_collectCallsExpr(stmt->forStmt.condition, list);
+		_collectCallsExpr(stmt->forStmt.update, list);
+		_collectCallsStmt(stmt->forStmt.body, list);
+		break;
+	case STMT_WHILE:
+		_collectCallsExpr(stmt->whileStmt.condition, list);
+		_collectCallsStmt(stmt->whileStmt.body, list);
+		break;
+	case STMT_RETURN:
+		_collectCallsExpr(stmt->returnExpr, list);
+		break;
+	case STMT_COMPOUND:
+		for (StmtList *stmtNode = stmt->compound; stmtNode != NULL; stmtNode = stmtNode->next) {
+			_collectCallsStmt(stmtNode->stmt, list);
+		}
+		break;
+	case STMT_PARALLEL:
+		for (StmtList *stmtNode = stmt->parallel; stmtNode != NULL; stmtNode = stmtNode->next) {
+			_collectCallsStmt(stmtNode->stmt, list);
+		}
+		break;
+	}
+}
+
+static void
+_emitInstances(CallList *calls) {
+	for (int i = 0; i < calls->count; ++i) {
+		Decl *callee = _findFunctionDecl(calls->items[i]->call.name);
+		TypeKind returnType = callee != NULL ? callee->func.returnType : TYPE_INT32;
+		fprintf(stdout, "  ");
+		_emitType(returnType);
+		fprintf(stdout, " __call%d;\n", i);
+	}
+	for (int i = 0; i < calls->count; ++i) {
+		Expr *call = calls->items[i];
+		Decl *callee = _findFunctionDecl(call->call.name);
+		fprintf(stdout, "  %s __u%d (", call->call.name, i);
+		ParamList *param = callee != NULL ? callee->func.params : NULL;
+		for (ExprList *argNode = call->call.args; argNode != NULL && param != NULL;
+		     argNode = argNode->next, param = param->next) {
+			fprintf(stdout, ".%s(", param->param->name);
+			_emitExpr(argNode->expr);
+			fprintf(stdout, "), ");
+		}
+		fprintf(stdout, ".out(__call%d));\n", i);
+	}
+}
+
 static void
 _emitModule(Decl *function, bool importPackage) {
 	fprintf(stdout, "module %s", function->func.name);
@@ -391,6 +535,12 @@ _emitModule(Decl *function, bool importPackage) {
 
 	_emitLocalDecls(function->func.body);
 
+	CallList calls = { .items = NULL, .count = 0, .capacity = 0 };
+	_collectCallsStmt(function->func.body, &calls);
+	_callNodes = calls.items;
+	_callCount = calls.count;
+	_emitInstances(&calls);
+
 	if (_bodyHasPlainStatement(function->func.body)) {
 		fprintf(stdout, "  always_comb begin\n");
 		for (StmtList *stmtNode = function->func.body->compound; stmtNode != NULL; stmtNode = stmtNode->next) {
@@ -410,6 +560,10 @@ _emitModule(Decl *function, bool importPackage) {
 		}
 	}
 	fprintf(stdout, "endmodule\n");
+
+	free(calls.items);
+	_callNodes = NULL;
+	_callCount = 0;
 }
 
 static bool
@@ -445,6 +599,7 @@ executeGenerator(CompilerState *compilerState) {
 	if (program == NULL) {
 		return;
 	}
+	_program = program;
 	bool importPackage = _emitPackage(program);
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
 		if (node->decl->kind == DECL_FUNCTION) {
