@@ -405,23 +405,19 @@ typedef struct {
 } NameList;
 
 static void
-_collectAssignTargets(Expr *expr, void *context) {
-	NameList *list = context;
-	if (expr->kind != EXPR_ASSIGN || expr->assign.target == NULL || expr->assign.target->kind != EXPR_IDENTIFIER) {
-		return;
-	}
+_addName(NameList *list, char *name) {
 	if (list->count == list->capacity) {
 		list->capacity = list->capacity == 0 ? 4 : list->capacity * 2;
 		list->names = realloc(list->names, list->capacity * sizeof(char *));
 	}
-	list->names[list->count++] = expr->assign.target->name;
+	list->names[list->count++] = name;
 }
 
 static bool
-_hasDuplicateName(NameList *list) {
-	for (int i = 0; i < list->count; ++i) {
-		for (int j = i + 1; j < list->count; ++j) {
-			if (strcmp(list->names[i], list->names[j]) == 0) {
+_namesIntersect(NameList *a, NameList *b) {
+	for (int i = 0; i < a->count; ++i) {
+		for (int j = 0; j < b->count; ++j) {
+			if (strcmp(a->names[i], b->names[j]) == 0) {
 				return true;
 			}
 		}
@@ -429,9 +425,125 @@ _hasDuplicateName(NameList *list) {
 	return false;
 }
 
+static void
+_collectExprRW(Expr *expr, NameList *reads, NameList *writes) {
+	if (expr == NULL) {
+		return;
+	}
+	switch (expr->kind) {
+	case EXPR_IDENTIFIER:
+		_addName(reads, expr->name);
+		break;
+	case EXPR_ASSIGN: {
+		Expr *target = expr->assign.target;
+		bool compound = expr->assign.op != ASSIGN_PLAIN;
+		if (target->kind == EXPR_IDENTIFIER) {
+			_addName(writes, target->name);
+			if (compound) {
+				_addName(reads, target->name);
+			}
+		} else if (target->kind == EXPR_ARRAY_ACCESS && target->arrayAccess.array->kind == EXPR_IDENTIFIER) {
+			_addName(writes, target->arrayAccess.array->name);
+			if (compound) {
+				_addName(reads, target->arrayAccess.array->name);
+			}
+			_collectExprRW(target->arrayAccess.index, reads, writes);
+		} else {
+			_collectExprRW(target, reads, writes);
+		}
+		_collectExprRW(expr->assign.value, reads, writes);
+		break;
+	}
+	case EXPR_POST_INC:
+	case EXPR_POST_DEC:
+		if (expr->postOp->kind == EXPR_IDENTIFIER) {
+			_addName(reads, expr->postOp->name);
+			_addName(writes, expr->postOp->name);
+		} else {
+			_collectExprRW(expr->postOp, reads, writes);
+		}
+		break;
+	case EXPR_BINARY:
+		_collectExprRW(expr->binary.left, reads, writes);
+		_collectExprRW(expr->binary.right, reads, writes);
+		break;
+	case EXPR_UNARY:
+		_collectExprRW(expr->unary.operand, reads, writes);
+		break;
+	case EXPR_ARRAY_ACCESS:
+		_collectExprRW(expr->arrayAccess.array, reads, writes);
+		_collectExprRW(expr->arrayAccess.index, reads, writes);
+		break;
+	case EXPR_CALL:
+		for (ExprList *argNode = expr->call.args; argNode != NULL; argNode = argNode->next) {
+			_collectExprRW(argNode->expr, reads, writes);
+		}
+		break;
+	case EXPR_INTRINSIC:
+		for (ExprList *argNode = expr->intrinsic.args; argNode != NULL; argNode = argNode->next) {
+			_collectExprRW(argNode->expr, reads, writes);
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+static void
+_collectStmtRW(Stmt *stmt, NameList *reads, NameList *writes) {
+	if (stmt == NULL) {
+		return;
+	}
+	switch (stmt->kind) {
+	case STMT_EXPR:
+		_collectExprRW(stmt->exprStmt, reads, writes);
+		break;
+	case STMT_LOCAL_DECL:
+		_collectExprRW(stmt->localDecl.arraySize, reads, writes);
+		_collectExprRW(stmt->localDecl.init, reads, writes);
+		for (ExprList *initNode = stmt->localDecl.initList; initNode != NULL; initNode = initNode->next) {
+			_collectExprRW(initNode->expr, reads, writes);
+		}
+		break;
+	case STMT_IF:
+		_collectExprRW(stmt->ifStmt.condition, reads, writes);
+		_collectStmtRW(stmt->ifStmt.thenBranch, reads, writes);
+		_collectStmtRW(stmt->ifStmt.elseBranch, reads, writes);
+		break;
+	case STMT_FOR:
+		_collectStmtRW(stmt->forStmt.init, reads, writes);
+		_collectExprRW(stmt->forStmt.condition, reads, writes);
+		_collectExprRW(stmt->forStmt.update, reads, writes);
+		_collectStmtRW(stmt->forStmt.body, reads, writes);
+		break;
+	case STMT_WHILE:
+		_collectExprRW(stmt->whileStmt.condition, reads, writes);
+		_collectStmtRW(stmt->whileStmt.body, reads, writes);
+		break;
+	case STMT_RETURN:
+		_collectExprRW(stmt->returnExpr, reads, writes);
+		break;
+	case STMT_COMPOUND:
+		for (StmtList *stmtNode = stmt->compound; stmtNode != NULL; stmtNode = stmtNode->next) {
+			_collectStmtRW(stmtNode->stmt, reads, writes);
+		}
+		break;
+	case STMT_PARALLEL:
+		for (StmtList *stmtNode = stmt->parallel; stmtNode != NULL; stmtNode = stmtNode->next) {
+			_collectStmtRW(stmtNode->stmt, reads, writes);
+		}
+		break;
+	}
+}
+
 typedef struct {
 	bool violation;
 } ParallelScope;
+
+static bool
+_statementsDepend(NameList *readsA, NameList *writesA, NameList *readsB, NameList *writesB) {
+	return _namesIntersect(writesA, writesB) || _namesIntersect(writesA, readsB) || _namesIntersect(readsA, writesB);
+}
 
 static void
 _checkParallelBlock(Stmt *stmt, void *context) {
@@ -439,14 +551,33 @@ _checkParallelBlock(Stmt *stmt, void *context) {
 	if (stmt->kind != STMT_PARALLEL) {
 		return;
 	}
-	NameList targets = { .names = NULL, .count = 0, .capacity = 0 };
+	int units = 0;
 	for (StmtList *stmtNode = stmt->parallel; stmtNode != NULL; stmtNode = stmtNode->next) {
-		_walkStmtExprs(stmtNode->stmt, _collectAssignTargets, &targets);
+		++units;
 	}
-	if (_hasDuplicateName(&targets)) {
-		scope->violation = true;
+	if (units == 0) {
+		return;
 	}
-	free(targets.names);
+	NameList *reads = calloc(units, sizeof(NameList));
+	NameList *writes = calloc(units, sizeof(NameList));
+	int index = 0;
+	for (StmtList *stmtNode = stmt->parallel; stmtNode != NULL; stmtNode = stmtNode->next) {
+		_collectStmtRW(stmtNode->stmt, &reads[index], &writes[index]);
+		++index;
+	}
+	for (int i = 0; i < units; ++i) {
+		for (int j = i + 1; j < units; ++j) {
+			if (_statementsDepend(&reads[i], &writes[i], &reads[j], &writes[j])) {
+				scope->violation = true;
+			}
+		}
+	}
+	for (int i = 0; i < units; ++i) {
+		free(reads[i].names);
+		free(writes[i].names);
+	}
+	free(reads);
+	free(writes);
 }
 
 static bool
