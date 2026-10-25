@@ -460,12 +460,176 @@ _checkParallelDependencies(Program *program) {
 	return !scope.violation;
 }
 
+typedef struct Scope {
+	char **names;
+	int count;
+	int capacity;
+	struct Scope *parent;
+} Scope;
+
+static void
+_scopeDeclare(Scope *scope, char *name) {
+	if (scope->count == scope->capacity) {
+		scope->capacity = scope->capacity == 0 ? 8 : scope->capacity * 2;
+		scope->names = realloc(scope->names, scope->capacity * sizeof(char *));
+	}
+	scope->names[scope->count++] = name;
+}
+
+static bool
+_scopeContains(Scope *scope, const char *name) {
+	for (Scope *current = scope; current != NULL; current = current->parent) {
+		for (int i = 0; i < current->count; ++i) {
+			if (strcmp(current->names[i], name) == 0) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+static bool
+_isDeclaredFunction(Program *program, const char *name) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		if (_isFunctionDecl(node->decl) && strcmp(node->decl->func.name, name) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+typedef struct {
+	Program *program;
+	Scope *scope;
+	bool resolved;
+} Resolver;
+
+static void
+_resolveName(Expr *expr, void *context) {
+	Resolver *resolver = context;
+	if (expr->kind == EXPR_IDENTIFIER) {
+		if (!_scopeContains(resolver->scope, expr->name) && !_isConstexprGlobal(resolver->program, expr->name)) {
+			resolver->resolved = false;
+		}
+	} else if (expr->kind == EXPR_CALL) {
+		if (!_isDeclaredFunction(resolver->program, expr->call.name)) {
+			resolver->resolved = false;
+		}
+	}
+}
+
+static void
+_resolveExprIn(Expr *expr, Scope *scope, Program *program, bool *ok) {
+	Resolver resolver = { .program = program, .scope = scope, .resolved = true };
+	_walkExpr(expr, _resolveName, &resolver);
+	if (!resolver.resolved) {
+		*ok = false;
+	}
+}
+
+static void _resolveStmt(Stmt *stmt, Scope *scope, Program *program, bool *ok);
+
+static void
+_resolveNested(Stmt *stmt, Scope *parent, Program *program, bool *ok) {
+	Scope child = { .names = NULL, .count = 0, .capacity = 0, .parent = parent };
+	_resolveStmt(stmt, &child, program, ok);
+	free(child.names);
+}
+
+static void
+_resolveStmt(Stmt *stmt, Scope *scope, Program *program, bool *ok) {
+	if (stmt == NULL) {
+		return;
+	}
+	switch (stmt->kind) {
+	case STMT_EXPR:
+		_resolveExprIn(stmt->exprStmt, scope, program, ok);
+		break;
+	case STMT_LOCAL_DECL:
+		_resolveExprIn(stmt->localDecl.arraySize, scope, program, ok);
+		_resolveExprIn(stmt->localDecl.init, scope, program, ok);
+		for (ExprList *initNode = stmt->localDecl.initList; initNode != NULL; initNode = initNode->next) {
+			_resolveExprIn(initNode->expr, scope, program, ok);
+		}
+		_scopeDeclare(scope, stmt->localDecl.name);
+		break;
+	case STMT_IF:
+		_resolveExprIn(stmt->ifStmt.condition, scope, program, ok);
+		_resolveNested(stmt->ifStmt.thenBranch, scope, program, ok);
+		_resolveNested(stmt->ifStmt.elseBranch, scope, program, ok);
+		break;
+	case STMT_FOR: {
+		Scope forScope = { .names = NULL, .count = 0, .capacity = 0, .parent = scope };
+		_resolveStmt(stmt->forStmt.init, &forScope, program, ok);
+		_resolveExprIn(stmt->forStmt.condition, &forScope, program, ok);
+		_resolveExprIn(stmt->forStmt.update, &forScope, program, ok);
+		_resolveNested(stmt->forStmt.body, &forScope, program, ok);
+		free(forScope.names);
+		break;
+	}
+	case STMT_WHILE:
+		_resolveExprIn(stmt->whileStmt.condition, scope, program, ok);
+		_resolveNested(stmt->whileStmt.body, scope, program, ok);
+		break;
+	case STMT_RETURN:
+		_resolveExprIn(stmt->returnExpr, scope, program, ok);
+		break;
+	case STMT_COMPOUND: {
+		Scope child = { .names = NULL, .count = 0, .capacity = 0, .parent = scope };
+		for (StmtList *stmtNode = stmt->compound; stmtNode != NULL; stmtNode = stmtNode->next) {
+			_resolveStmt(stmtNode->stmt, &child, program, ok);
+		}
+		free(child.names);
+		break;
+	}
+	case STMT_PARALLEL: {
+		Scope child = { .names = NULL, .count = 0, .capacity = 0, .parent = scope };
+		for (StmtList *stmtNode = stmt->parallel; stmtNode != NULL; stmtNode = stmtNode->next) {
+			_resolveStmt(stmtNode->stmt, &child, program, ok);
+		}
+		free(child.names);
+		break;
+	}
+	}
+}
+
+static bool
+_checkNameResolution(Program *program) {
+	bool ok = true;
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (_isFunctionDecl(decl)) {
+			Scope funcScope = { .names = NULL, .count = 0, .capacity = 0, .parent = NULL };
+			for (ParamList *paramNode = decl->func.params; paramNode != NULL; paramNode = paramNode->next) {
+				if (paramNode->param->kind == PARAM_ARRAY) {
+					_resolveExprIn(paramNode->param->arraySize, &funcScope, program, &ok);
+				}
+				_scopeDeclare(&funcScope, paramNode->param->name);
+			}
+			_resolveStmt(decl->func.body, &funcScope, program, &ok);
+			free(funcScope.names);
+		} else if (decl->kind == DECL_CONSTEXPR_VAR) {
+			_resolveExprIn(decl->constexprVar.init, NULL, program, &ok);
+		} else if (decl->kind == DECL_CONSTEXPR_ARRAY) {
+			_resolveExprIn(decl->constexprArray.size, NULL, program, &ok);
+			for (ExprList *initNode = decl->constexprArray.init; initNode != NULL; initNode = initNode->next) {
+				_resolveExprIn(initNode->expr, NULL, program, &ok);
+			}
+		}
+	}
+	return ok;
+}
+
 bool
 executeSemanticAnalysis(CompilerState *compilerState) {
 	logDebugging(_logger, "Analyzing semantics...");
 	Program *program = compilerState->abstractSyntaxtTree;
 	if (program == NULL) {
 		return true;
+	}
+	if (!_checkNameResolution(program)) {
+		logError(_logger, "The program references an undeclared name.");
+		return false;
 	}
 	if (!_checkNoRecursion(program)) {
 		logError(_logger, "Recursion is not allowed.");
