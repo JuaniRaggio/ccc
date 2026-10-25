@@ -8,6 +8,7 @@ Compilador de un lenguaje derivado de C a SystemVerilog sintetizable (HLS), desa
 
 * [Estado](#estado)
 * [Pasos del compilador](#pasos-del-compilador)
+* [Estrategia de pruebas](#estrategia-de-pruebas)
 * [SystemVerilog](#systemverilog)
 * [Requirements](#requirements)
 * [Configuration](#configuration)
@@ -44,6 +45,25 @@ El compilador procesa un programa en cuatro fases. Las tres primeras forman el *
 3. **Análisis semántico** (`frontend/semantic-analysis/SemanticAnalyzer.c`). Una pasada sobre el AST ya completo que valida las reglas estáticas del lenguaje (ver tabla en [Estado](#estado)) y acepta o rechaza. Corre después del parser porque necesita el árbol entero: así puede razonar sobre todo el programa a la vez (por ejemplo, recursión mutua entre funciones declaradas en cualquier orden, imposible de detectar durante el parseo).
 
 4. **Generación de código** (`backend/code-generation/Generator.c`). Recorre el AST ya validado y emite SystemVerilog sintetizable. _Pendiente (Stage III)._
+
+## Estrategia de pruebas
+
+Dos capas:
+
+1. **Frontend: aceptación/rechazo por código de salida** (`src/main/bash/test.sh`). Cada programa en `src/test/c/accept/` debe salir con código `0`; cada uno en `src/test/c/reject/` debe salir con código distinto de `0`.
+2. **Backend: lint y simulación del SystemVerilog generado** (`src/main/bash/verilog.sh`). Verilator verifica que la salida sea sintetizable; Icarus la simula contra un testbench cuando existe.
+
+Opciones consideradas para la capa de frontend y por qué elegimos la actual:
+
+| Opción                              | Decisión | Motivo                                                                                       |
+| :---------------------------------- | :------: | :------------------------------------------------------------------------------------------- |
+| Exit-code black-box                 | Elegida  | Prueba el contrato real (acepta válido / rechaza inválido), robusta a refactors internos.    |
+| Diff contra AST/salida _golden_     | Descartada | Frágil: cualquier cambio de formato rompe los tests; costosa de mantener.                  |
+| Unit tests en C de funciones internas | Descartada | Acopla los tests a la estructura interna y requiere un framework.                         |
+
+El límite del black-box (no distingue "aceptado pero con AST incorrecto") lo cubre la capa de backend, que valida la salida con herramientas estándar (Verilator/Icarus) en vez de un verificador propio.
+
+CI (`.github/workflows/pipeline.yaml`) ejecuta _build_ + `test.sh` en cada push o PR. La verificación de Verilog se corre localmente.
 
 ## SystemVerilog
 
