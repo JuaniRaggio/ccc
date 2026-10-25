@@ -98,3 +98,34 @@ lógico si es sin signo.
 
 `/` y `%` no forman parte del lenguaje (división genérica costosa en hardware; se posterga). Un
 programa que los use es rechazado.
+
+= Mapeo a hardware
+
+== Combinacional por defecto
+
+Cada función se traduce a un módulo *combinacional*: los parámetros por valor son puertos de
+entrada, las referencias son puertos de salida, el retorno es el puerto `out`, y el cuerpo es
+lógica combinacional (`always_comb`). Los `for` de límite estático se desenrollan. No hay puertos
+de reloj ni reset.
+
+== Bloques `__parallel`
+
+Cada sentencia del bloque se emite como un `always_comb` independiente; es válido porque el
+análisis garantizó que no hay dependencias (RAW/WAW/WAR) entre ellas.
+
+== Llamadas a función
+
+Una llamada instancia el módulo invocado, conecta sus argumentos a los puertos de entrada y
+expone el resultado en una señal que reemplaza a la llamada en la expresión.
+
+== `constexpr`
+
+Las variables `constexpr` se emiten como `localparam` en un _package_ compartido; las funciones
+`constexpr` no generan hardware (se evalúan en compilación).
+
+== Futuro: lógica secuencial
+
+Un modo secuencial (FSM con `always_ff`, puertos `clk`/`rst` y handshake `start`/`done`) permitirá
+reusar hardware por iteración en bucles largos, a cambio de latencia. Será opt-in por anotación; el
+protocolo de handshake (inicialmente `start`/`done` por pulso, migrable a `ready`/`valid`) se
+define al implementarlo.
