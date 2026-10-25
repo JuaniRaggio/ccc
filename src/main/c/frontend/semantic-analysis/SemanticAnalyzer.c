@@ -460,160 +460,344 @@ _checkParallelDependencies(Program *program) {
 	return !scope.violation;
 }
 
+typedef enum { CAT_INTEGER, CAT_BOOL, CAT_VOID } TypeCategory;
+
+static TypeCategory
+_category(TypeKind type) {
+	if (type == TYPE_BOOL) {
+		return CAT_BOOL;
+	}
+	if (type == TYPE_VOID) {
+		return CAT_VOID;
+	}
+	return CAT_INTEGER;
+}
+
+typedef struct {
+	char *name;
+	TypeKind type;
+} Symbol;
+
 typedef struct Scope {
-	char **names;
+	Symbol *symbols;
 	int count;
 	int capacity;
 	struct Scope *parent;
 } Scope;
 
 static void
-_scopeDeclare(Scope *scope, char *name) {
+_scopeDeclare(Scope *scope, char *name, TypeKind type) {
 	if (scope->count == scope->capacity) {
 		scope->capacity = scope->capacity == 0 ? 8 : scope->capacity * 2;
-		scope->names = realloc(scope->names, scope->capacity * sizeof(char *));
+		scope->symbols = realloc(scope->symbols, scope->capacity * sizeof(Symbol));
 	}
-	scope->names[scope->count++] = name;
+	scope->symbols[scope->count].name = name;
+	scope->symbols[scope->count].type = type;
+	scope->count++;
 }
 
-static bool
-_scopeContains(Scope *scope, const char *name) {
+static TypeKind
+_scopeLookup(Scope *scope, const char *name, bool *found) {
 	for (Scope *current = scope; current != NULL; current = current->parent) {
 		for (int i = 0; i < current->count; ++i) {
-			if (strcmp(current->names[i], name) == 0) {
-				return true;
+			if (strcmp(current->symbols[i].name, name) == 0) {
+				*found = true;
+				return current->symbols[i].type;
 			}
 		}
 	}
-	return false;
+	*found = false;
+	return TYPE_INT32;
 }
 
-static bool
-_isDeclaredFunction(Program *program, const char *name) {
+static Decl *
+_findFunction(Program *program, const char *name) {
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
 		if (_isFunctionDecl(node->decl) && strcmp(node->decl->func.name, name) == 0) {
-			return true;
+			return node->decl;
 		}
 	}
-	return false;
+	return NULL;
 }
 
-typedef struct {
-	Program *program;
-	Scope *scope;
-	bool resolved;
-} Resolver;
+static TypeKind
+_constexprGlobalType(Program *program, const char *name, bool *found) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (decl->kind == DECL_CONSTEXPR_VAR && strcmp(decl->constexprVar.name, name) == 0) {
+			*found = true;
+			return decl->constexprVar.type;
+		}
+		if (decl->kind == DECL_CONSTEXPR_ARRAY && strcmp(decl->constexprArray.name, name) == 0) {
+			*found = true;
+			return decl->constexprArray.type;
+		}
+	}
+	*found = false;
+	return TYPE_INT32;
+}
 
-static void
-_resolveName(Expr *expr, void *context) {
-	Resolver *resolver = context;
-	if (expr->kind == EXPR_IDENTIFIER) {
-		if (!_scopeContains(resolver->scope, expr->name) && !_isConstexprGlobal(resolver->program, expr->name)) {
-			resolver->resolved = false;
+static TypeKind
+_inferType(Expr *expr, Scope *scope, Program *program, bool *ok) {
+	if (expr == NULL) {
+		return TYPE_VOID;
+	}
+	switch (expr->kind) {
+	case EXPR_INT_LITERAL:
+		return TYPE_INT32;
+	case EXPR_BOOL_LITERAL:
+		return TYPE_BOOL;
+	case EXPR_IDENTIFIER: {
+		bool found = false;
+		TypeKind type = _scopeLookup(scope, expr->name, &found);
+		if (!found) {
+			type = _constexprGlobalType(program, expr->name, &found);
 		}
-	} else if (expr->kind == EXPR_CALL) {
-		if (!_isDeclaredFunction(resolver->program, expr->call.name)) {
-			resolver->resolved = false;
+		if (!found) {
+			logError(_logger, "Reference to undeclared name '%s'.", expr->name);
+			*ok = false;
 		}
+		return type;
+	}
+	case EXPR_BINARY: {
+		TypeKind left = _inferType(expr->binary.left, scope, program, ok);
+		TypeKind right = _inferType(expr->binary.right, scope, program, ok);
+		switch (expr->binary.op) {
+		case BINOP_ADD:
+		case BINOP_SUB:
+		case BINOP_MUL:
+		case BINOP_LSHIFT:
+		case BINOP_RSHIFT:
+			if (_category(left) != CAT_INTEGER || _category(right) != CAT_INTEGER) {
+				logError(_logger, "Arithmetic operator requires integer operands.");
+				*ok = false;
+			}
+			return left;
+		case BINOP_LT:
+		case BINOP_GT:
+		case BINOP_LE:
+		case BINOP_GE:
+			if (_category(left) != CAT_INTEGER || _category(right) != CAT_INTEGER) {
+				logError(_logger, "Relational operator requires integer operands.");
+				*ok = false;
+			}
+			return TYPE_BOOL;
+		case BINOP_EQ:
+		case BINOP_NEQ:
+			if (_category(left) != _category(right)) {
+				logError(_logger, "Equality operator requires operands of the same category.");
+				*ok = false;
+			}
+			return TYPE_BOOL;
+		default:
+			if (_category(left) != CAT_BOOL || _category(right) != CAT_BOOL) {
+				logError(_logger, "Logical operator requires boolean operands.");
+				*ok = false;
+			}
+			return TYPE_BOOL;
+		}
+	}
+	case EXPR_UNARY: {
+		TypeKind operand = _inferType(expr->unary.operand, scope, program, ok);
+		if (expr->unary.op == UNOP_NEG) {
+			if (_category(operand) != CAT_INTEGER) {
+				logError(_logger, "Unary minus requires an integer operand.");
+				*ok = false;
+			}
+			return operand;
+		}
+		if (_category(operand) != CAT_BOOL) {
+			logError(_logger, "Logical negation requires a boolean operand.");
+			*ok = false;
+		}
+		return TYPE_BOOL;
+	}
+	case EXPR_ASSIGN: {
+		TypeKind target = _inferType(expr->assign.target, scope, program, ok);
+		TypeKind value = _inferType(expr->assign.value, scope, program, ok);
+		if (_category(target) != _category(value)) {
+			logError(_logger, "Assignment between incompatible types.");
+			*ok = false;
+		}
+		return target;
+	}
+	case EXPR_ARRAY_ACCESS: {
+		TypeKind element = _inferType(expr->arrayAccess.array, scope, program, ok);
+		TypeKind index = _inferType(expr->arrayAccess.index, scope, program, ok);
+		if (_category(index) != CAT_INTEGER) {
+			logError(_logger, "Array index must be an integer.");
+			*ok = false;
+		}
+		return element;
+	}
+	case EXPR_CALL: {
+		Decl *function = _findFunction(program, expr->call.name);
+		if (function == NULL) {
+			logError(_logger, "Call to undeclared function '%s'.", expr->call.name);
+			*ok = false;
+			return TYPE_INT32;
+		}
+		ParamList *param = function->func.params;
+		bool extraArguments = false;
+		for (ExprList *argNode = expr->call.args; argNode != NULL; argNode = argNode->next) {
+			TypeKind argument = _inferType(argNode->expr, scope, program, ok);
+			if (param != NULL) {
+				if (_category(argument) != _category(param->param->type)) {
+					logError(_logger, "Argument type mismatch in call to '%s'.", expr->call.name);
+					*ok = false;
+				}
+				param = param->next;
+			} else {
+				extraArguments = true;
+			}
+		}
+		if (param != NULL || extraArguments) {
+			logError(_logger, "Wrong number of arguments in call to '%s'.", expr->call.name);
+			*ok = false;
+		}
+		return function->func.returnType;
+	}
+	case EXPR_INTRINSIC:
+		for (ExprList *argNode = expr->intrinsic.args; argNode != NULL; argNode = argNode->next) {
+			if (_category(_inferType(argNode->expr, scope, program, ok)) != CAT_INTEGER) {
+				logError(_logger, "Builtin requires integer arguments.");
+				*ok = false;
+			}
+		}
+		return TYPE_INT32;
+	default:
+		return _inferType(expr->postOp, scope, program, ok);
 	}
 }
 
+static void _typeCheckStmt(Stmt *stmt, Scope *scope, Program *program, TypeKind returnType, bool *ok);
+
 static void
-_resolveExprIn(Expr *expr, Scope *scope, Program *program, bool *ok) {
-	Resolver resolver = { .program = program, .scope = scope, .resolved = true };
-	_walkExpr(expr, _resolveName, &resolver);
-	if (!resolver.resolved) {
+_typeCheckNested(Stmt *stmt, Scope *parent, Program *program, TypeKind returnType, bool *ok) {
+	Scope child = { .symbols = NULL, .count = 0, .capacity = 0, .parent = parent };
+	_typeCheckStmt(stmt, &child, program, returnType, ok);
+	free(child.symbols);
+}
+
+static void
+_typeCheckCondition(Expr *condition, Scope *scope, Program *program, bool *ok) {
+	if (condition != NULL && _category(_inferType(condition, scope, program, ok)) != CAT_BOOL) {
+		logError(_logger, "A condition must be a boolean expression.");
 		*ok = false;
 	}
 }
 
-static void _resolveStmt(Stmt *stmt, Scope *scope, Program *program, bool *ok);
-
 static void
-_resolveNested(Stmt *stmt, Scope *parent, Program *program, bool *ok) {
-	Scope child = { .names = NULL, .count = 0, .capacity = 0, .parent = parent };
-	_resolveStmt(stmt, &child, program, ok);
-	free(child.names);
-}
-
-static void
-_resolveStmt(Stmt *stmt, Scope *scope, Program *program, bool *ok) {
+_typeCheckStmt(Stmt *stmt, Scope *scope, Program *program, TypeKind returnType, bool *ok) {
 	if (stmt == NULL) {
 		return;
 	}
 	switch (stmt->kind) {
 	case STMT_EXPR:
-		_resolveExprIn(stmt->exprStmt, scope, program, ok);
+		_inferType(stmt->exprStmt, scope, program, ok);
 		break;
 	case STMT_LOCAL_DECL:
-		_resolveExprIn(stmt->localDecl.arraySize, scope, program, ok);
-		_resolveExprIn(stmt->localDecl.init, scope, program, ok);
-		for (ExprList *initNode = stmt->localDecl.initList; initNode != NULL; initNode = initNode->next) {
-			_resolveExprIn(initNode->expr, scope, program, ok);
+		if (stmt->localDecl.arraySize != NULL
+		    && _category(_inferType(stmt->localDecl.arraySize, scope, program, ok)) != CAT_INTEGER) {
+			logError(_logger, "Array size must be an integer.");
+			*ok = false;
 		}
-		_scopeDeclare(scope, stmt->localDecl.name);
+		if (stmt->localDecl.init != NULL
+		    && _category(_inferType(stmt->localDecl.init, scope, program, ok)) != _category(stmt->localDecl.type)) {
+			logError(_logger, "Initializer type does not match the declared type.");
+			*ok = false;
+		}
+		for (ExprList *initNode = stmt->localDecl.initList; initNode != NULL; initNode = initNode->next) {
+			if (_category(_inferType(initNode->expr, scope, program, ok)) != _category(stmt->localDecl.type)) {
+				logError(_logger, "Array initializer type does not match the declared type.");
+				*ok = false;
+			}
+		}
+		_scopeDeclare(scope, stmt->localDecl.name, stmt->localDecl.type);
 		break;
 	case STMT_IF:
-		_resolveExprIn(stmt->ifStmt.condition, scope, program, ok);
-		_resolveNested(stmt->ifStmt.thenBranch, scope, program, ok);
-		_resolveNested(stmt->ifStmt.elseBranch, scope, program, ok);
+		_typeCheckCondition(stmt->ifStmt.condition, scope, program, ok);
+		_typeCheckNested(stmt->ifStmt.thenBranch, scope, program, returnType, ok);
+		_typeCheckNested(stmt->ifStmt.elseBranch, scope, program, returnType, ok);
 		break;
 	case STMT_FOR: {
-		Scope forScope = { .names = NULL, .count = 0, .capacity = 0, .parent = scope };
-		_resolveStmt(stmt->forStmt.init, &forScope, program, ok);
-		_resolveExprIn(stmt->forStmt.condition, &forScope, program, ok);
-		_resolveExprIn(stmt->forStmt.update, &forScope, program, ok);
-		_resolveNested(stmt->forStmt.body, &forScope, program, ok);
-		free(forScope.names);
+		Scope forScope = { .symbols = NULL, .count = 0, .capacity = 0, .parent = scope };
+		_typeCheckStmt(stmt->forStmt.init, &forScope, program, returnType, ok);
+		_typeCheckCondition(stmt->forStmt.condition, &forScope, program, ok);
+		_inferType(stmt->forStmt.update, &forScope, program, ok);
+		_typeCheckNested(stmt->forStmt.body, &forScope, program, returnType, ok);
+		free(forScope.symbols);
 		break;
 	}
 	case STMT_WHILE:
-		_resolveExprIn(stmt->whileStmt.condition, scope, program, ok);
-		_resolveNested(stmt->whileStmt.body, scope, program, ok);
+		_typeCheckCondition(stmt->whileStmt.condition, scope, program, ok);
+		_typeCheckNested(stmt->whileStmt.body, scope, program, returnType, ok);
 		break;
 	case STMT_RETURN:
-		_resolveExprIn(stmt->returnExpr, scope, program, ok);
+		if (stmt->returnExpr == NULL) {
+			if (_category(returnType) != CAT_VOID) {
+				logError(_logger, "A non-void function must return a value.");
+				*ok = false;
+			}
+		} else {
+			TypeKind actual = _inferType(stmt->returnExpr, scope, program, ok);
+			if (_category(returnType) == CAT_VOID) {
+				logError(_logger, "A void function cannot return a value.");
+				*ok = false;
+			} else if (_category(actual) != _category(returnType)) {
+				logError(_logger, "Return type does not match the function signature.");
+				*ok = false;
+			}
+		}
 		break;
 	case STMT_COMPOUND: {
-		Scope child = { .names = NULL, .count = 0, .capacity = 0, .parent = scope };
+		Scope child = { .symbols = NULL, .count = 0, .capacity = 0, .parent = scope };
 		for (StmtList *stmtNode = stmt->compound; stmtNode != NULL; stmtNode = stmtNode->next) {
-			_resolveStmt(stmtNode->stmt, &child, program, ok);
+			_typeCheckStmt(stmtNode->stmt, &child, program, returnType, ok);
 		}
-		free(child.names);
+		free(child.symbols);
 		break;
 	}
 	case STMT_PARALLEL: {
-		Scope child = { .names = NULL, .count = 0, .capacity = 0, .parent = scope };
+		Scope child = { .symbols = NULL, .count = 0, .capacity = 0, .parent = scope };
 		for (StmtList *stmtNode = stmt->parallel; stmtNode != NULL; stmtNode = stmtNode->next) {
-			_resolveStmt(stmtNode->stmt, &child, program, ok);
+			_typeCheckStmt(stmtNode->stmt, &child, program, returnType, ok);
 		}
-		free(child.names);
+		free(child.symbols);
 		break;
 	}
 	}
 }
 
 static bool
-_checkNameResolution(Program *program) {
+_checkTypes(Program *program) {
 	bool ok = true;
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
 		Decl *decl = node->decl;
 		if (_isFunctionDecl(decl)) {
-			Scope funcScope = { .names = NULL, .count = 0, .capacity = 0, .parent = NULL };
+			Scope funcScope = { .symbols = NULL, .count = 0, .capacity = 0, .parent = NULL };
 			for (ParamList *paramNode = decl->func.params; paramNode != NULL; paramNode = paramNode->next) {
 				if (paramNode->param->kind == PARAM_ARRAY) {
-					_resolveExprIn(paramNode->param->arraySize, &funcScope, program, &ok);
+					_inferType(paramNode->param->arraySize, &funcScope, program, &ok);
 				}
-				_scopeDeclare(&funcScope, paramNode->param->name);
+				_scopeDeclare(&funcScope, paramNode->param->name, paramNode->param->type);
 			}
-			_resolveStmt(decl->func.body, &funcScope, program, &ok);
-			free(funcScope.names);
+			_typeCheckStmt(decl->func.body, &funcScope, program, decl->func.returnType, &ok);
+			free(funcScope.symbols);
 		} else if (decl->kind == DECL_CONSTEXPR_VAR) {
-			_resolveExprIn(decl->constexprVar.init, NULL, program, &ok);
+			if (decl->constexprVar.init != NULL
+			    && _category(_inferType(decl->constexprVar.init, NULL, program, &ok))
+			           != _category(decl->constexprVar.type)) {
+				logError(_logger, "Constexpr initializer type does not match the declared type.");
+				ok = false;
+			}
 		} else if (decl->kind == DECL_CONSTEXPR_ARRAY) {
-			_resolveExprIn(decl->constexprArray.size, NULL, program, &ok);
+			_inferType(decl->constexprArray.size, NULL, program, &ok);
 			for (ExprList *initNode = decl->constexprArray.init; initNode != NULL; initNode = initNode->next) {
-				_resolveExprIn(initNode->expr, NULL, program, &ok);
+				if (_category(_inferType(initNode->expr, NULL, program, &ok)) != _category(decl->constexprArray.type)) {
+					logError(_logger, "Constexpr array initializer type does not match the declared type.");
+					ok = false;
+				}
 			}
 		}
 	}
@@ -627,8 +811,8 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 	if (program == NULL) {
 		return true;
 	}
-	if (!_checkNameResolution(program)) {
-		logError(_logger, "The program references an undeclared name.");
+	if (!_checkTypes(program)) {
+		logError(_logger, "The program has name-resolution or type errors.");
 		return false;
 	}
 	if (!_checkNoRecursion(program)) {
