@@ -7,6 +7,7 @@
 Compilador de un lenguaje derivado de C a SystemVerilog sintetizable (HLS), desarrollado con Flex y Bison sobre la base [Flex-Bison-Compiler](https://github.com/agustin-golmar/Flex-Bison-Compiler). La especificación del lenguaje se encuentra en [`doc/1er-entrega.typ`](doc/1er-entrega.typ).
 
 * [Estado](#estado)
+* [Pasos del compilador](#pasos-del-compilador)
 * [SystemVerilog](#systemverilog)
 * [Requirements](#requirements)
 * [Configuration](#configuration)
@@ -16,22 +17,33 @@ Compilador de un lenguaje derivado de C a SystemVerilog sintetizable (HLS), desa
 
 ## Estado
 
-**Stage II (Frontend)**: el analizador léxico (`FlexPatterns.l`) y sintáctico (`BisonGrammar.y`) construyen el AST completo del lenguaje (`AbstractSyntaxTree.h`). El backend (análisis semántico y generación de SystemVerilog) corresponde al Stage III.
+**Frontend completo**: léxico (`FlexPatterns.l`), sintáctico (`BisonGrammar.y` -> AST en `AbstractSyntaxTree.h`) y semántico (`frontend/semantic-analysis/SemanticAnalyzer.c`). El frontend acepta o rechaza el programa según las reglas estáticas del lenguaje. El backend (`backend/code-generation/`) se ocupa únicamente de generar SystemVerilog y corresponde al Stage III.
 
 El único conflicto de la gramática es el _dangling else_ (`%expect 1`), resuelto por Bison asociando el `else` al `if` más cercano.
 
-Los siguientes casos de rechazo dependen del análisis semántico, por lo que el frontend los acepta momentáneamente (falsos positivos esperados):
+El análisis semántico recorre el AST completo y rechaza el programa si no se cumple alguna de estas reglas:
 
-| Caso                                     | Validación pendiente (Stage III)                         |
-| :--------------------------------------- | :------------------------------------------------------- |
-| `reject/06-recursive-function`           | Detección de recursión en el grafo de llamadas.          |
-| `reject/11-dynamic-for-bound`            | Límite de `for` literal o `constexpr`.                   |
-| `reject/12-parallel-dependency`          | Escrituras disjuntas dentro de `__parallel`.             |
-| `reject/14-constexpr-recursive`          | Recursión en funciones `constexpr`.                      |
-| `reject/15-constexpr-with-reference`     | Funciones `constexpr` sin parámetros por referencia.     |
-| `reject/16-constexpr-calls-nonconstexpr` | Funciones `constexpr` solo llaman a otras `constexpr`.   |
+| Regla del lenguaje                                         | Implementación                                                        |
+| :--------------------------------------------------------- | :-------------------------------------------------------------------- |
+| No hay recursión (directa ni mutua).                       | Grafo de llamadas + detección de ciclos (DFS).                        |
+| Las funciones `constexpr` no toman parámetros por referencia. | Inspección de los parámetros de cada declaración `constexpr`.      |
+| Un contexto `constexpr` solo invoca funciones `constexpr`. | Recorrido de inicializadores y cuerpos `constexpr`.                   |
+| El límite de un `for` es constante en tiempo de compilación. | Literal, `constexpr` global, o parámetro dentro de una `constexpr`. |
+| Dentro de `__parallel` no se escribe dos veces la misma variable. | Detección de escrituras duplicadas por bloque.                 |
 
-Nota: `reject/08-stdlib-call` hoy se rechaza léxicamente (los literales de cadena no existen en el lenguaje); en el Stage III también se rechazará por invocar una función no declarada.
+Pendiente para el Stage III: tabla de símbolos y chequeo de tipos (uso de nombres no declarados, compatibilidad de tipos), y la generación de código.
+
+## Pasos del compilador
+
+El compilador procesa un programa en cuatro fases. Las tres primeras forman el **frontend** (validan el lenguaje de entrada); la cuarta es el **backend** (genera el lenguaje de salida).
+
+1. **Análisis léxico** (`frontend/lexical-analysis/FlexPatterns.l`). Convierte el texto fuente en una secuencia de tokens. Las palabras clave y los operadores son tokens dedicados; cualquier otro nombre es un único token `IDENTIFIER` que lleva su lexema como valor semántico; comentarios y espacios se descartan.
+
+2. **Análisis sintáctico** (`frontend/syntactic-analysis/BisonGrammar.y`). Un parser LALR(1) _push_ consume los tokens y, mediante las acciones semánticas (`BisonActions.c`), construye el AST (`AbstractSyntaxTree.h`). Si la secuencia no deriva de la gramática, se rechaza.
+
+3. **Análisis semántico** (`frontend/semantic-analysis/SemanticAnalyzer.c`). Una pasada sobre el AST ya completo que valida las reglas estáticas del lenguaje (ver tabla en [Estado](#estado)) y acepta o rechaza. Corre después del parser porque necesita el árbol entero: así puede razonar sobre todo el programa a la vez (por ejemplo, recursión mutua entre funciones declaradas en cualquier orden, imposible de detectar durante el parseo).
+
+4. **Generación de código** (`backend/code-generation/Generator.c`). Recorre el AST ya validado y emite SystemVerilog sintetizable. _Pendiente (Stage III)._
 
 ## SystemVerilog
 

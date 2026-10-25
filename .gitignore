@@ -3,6 +3,7 @@
 # Folders.
 .DS_Store/
 /.build/
+/.cache/
 /.ide-build/
 /.git/
 /.vs/

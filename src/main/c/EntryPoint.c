@@ -1,6 +1,6 @@
 #include "backend/code-generation/Generator.h"
-#include "backend/semantic-analysis/SemanticAnalyzer.h"
 #include "frontend/Frontend.h"
+#include "frontend/semantic-analysis/SemanticAnalyzer.h"
 #include "frontend/lexical-analysis/FlexActions.h"
 #include "frontend/syntactic-analysis/BisonActions.h"
 #include "support/logging/Logger.h"
@@ -27,20 +27,18 @@ main(const int length, const char **arguments) {
 		    initializeSemanticAnalysisModule(),           initializeGeneratorModule() };
 	CompilationStatus compilationStatus = executeSyntacticAnalysis();
 	Program *program = compilerState.abstractSyntaxtTree;
-	if (compilationStatus == SUCCEEDED) {
-		// ----------------------------------------------------------------------------------------
-		// Beginning of the Backend... ------------------------------------------------------------
-		if (executeSemanticAnalysis(&compilerState)) {
-			executeGenerator(&compilerState);
-		} else {
-			logError(logger, "The semantic-analysis phase rejects the input program.");
-			compilationStatus = FAILED;
-		}
-		// ...end of the Backend. -----------------------------------------------------------------
-		// ----------------------------------------------------------------------------------------
-	} else {
+	if (compilationStatus != SUCCEEDED) {
 		logError(logger, "The syntactic-analysis phase rejects the input program.");
 		compilationStatus = FAILED;
+	} else if (!executeSemanticAnalysis(&compilerState)) {
+		logError(logger, "The semantic-analysis phase rejects the input program.");
+		compilationStatus = FAILED;
+	} else {
+		// ----------------------------------------------------------------------------------------
+		// Beginning of the Backend... ------------------------------------------------------------
+		executeGenerator(&compilerState);
+		// ...end of the Backend. -----------------------------------------------------------------
+		// ----------------------------------------------------------------------------------------
 	}
 	logDebugging(logger, "Releasing AST resources...");
 	destroyProgram(program);
