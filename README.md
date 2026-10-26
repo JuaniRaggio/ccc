@@ -18,7 +18,7 @@ Compilador de un lenguaje derivado de C a SystemVerilog sintetizable (HLS), desa
 
 ## Estado
 
-**Frontend completo**: léxico (`FlexPatterns.l`), sintáctico (`BisonGrammar.y` -> AST en `AbstractSyntaxTree.h`) y semántico (`frontend/semantic-analysis/SemanticAnalyzer.c`). El frontend acepta o rechaza el programa según las reglas estáticas del lenguaje. El backend (`backend/code-generation/`) se ocupa únicamente de generar SystemVerilog y corresponde al Stage III.
+**Frontend completo**: léxico (`FlexPatterns.l`), sintáctico (`BisonGrammar.y` -> AST en `AbstractSyntaxTree.h`) y semántico (`frontend/semantic-analysis/SemanticAnalyzer.c`). El frontend acepta o rechaza el programa según las reglas estáticas del lenguaje. El backend (`backend/code-generation/`) genera SystemVerilog combinacional (módulos, puertos, `always_comb`, `__parallel`, `constexpr` como `localparam`, llamadas como instanciación de módulos).
 
 El único conflicto de la gramática es el _dangling else_ (`%expect 1`), resuelto por Bison asociando el `else` al `if` más cercano.
 
@@ -26,11 +26,13 @@ El análisis semántico recorre el AST completo y rechaza el programa si no se c
 
 | Regla del lenguaje                                         | Implementación                                                        |
 | :--------------------------------------------------------- | :-------------------------------------------------------------------- |
+| Nombres declarados; tipos, aridad y tipo de retorno compatibles. | Tabla de símbolos con scopes + inferencia de tipos.             |
 | No hay recursión (directa ni mutua).                       | Grafo de llamadas + detección de ciclos (DFS).                        |
 | Las funciones `constexpr` no toman parámetros por referencia. | Inspección de los parámetros de cada declaración `constexpr`.      |
-| Un contexto `constexpr` solo invoca funciones `constexpr`. | Recorrido de inicializadores y cuerpos `constexpr`.                   |
+| `constexpr` solo invoca `constexpr`, y solo se invoca desde un contexto `constexpr`. | Recorrido de contextos `constexpr` y cuerpos runtime.     |
 | El límite de un `for` es constante en tiempo de compilación. | Literal, `constexpr` global, o parámetro dentro de una `constexpr`. |
-| Dentro de `__parallel` no se escribe dos veces la misma variable. | Detección de escrituras duplicadas por bloque.                 |
+| Solo se indexan arreglos o referencias, no escalares.      | Flag `isArray` en la tabla de símbolos.                               |
+| Dentro de `__parallel` no hay dependencias de datos (RAW/WAW/WAR). | Conjuntos de lectura/escritura por sentencia.                  |
 
 Pendiente para el Stage III: tabla de símbolos y chequeo de tipos (uso de nombres no declarados, compatibilidad de tipos), y la generación de código.
 
