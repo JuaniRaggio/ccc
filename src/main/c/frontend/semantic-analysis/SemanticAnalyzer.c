@@ -313,6 +313,25 @@ _checkConstexprCalls(Program *program) {
 	return !scope.violation;
 }
 
+static void
+_checkRuntimeCall(Expr *expr, void *context) {
+	ConstexprScope *scope = context;
+	if (expr->kind == EXPR_CALL && _isConstexprFunction(scope->program, expr->call.name)) {
+		scope->violation = true;
+	}
+}
+
+static bool
+_checkRuntimeCallsConstexpr(Program *program) {
+	ConstexprScope scope = { .program = program, .violation = false };
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		if (node->decl->kind == DECL_FUNCTION) {
+			_walkStmtExprs(node->decl->func.body, _checkRuntimeCall, &scope);
+		}
+	}
+	return !scope.violation;
+}
+
 typedef struct {
 	Program *program;
 	bool inConstexprFunc;
@@ -607,6 +626,7 @@ _category(TypeKind type) {
 typedef struct {
 	char *name;
 	TypeKind type;
+	bool isArray;
 } Symbol;
 
 typedef struct Scope {
@@ -617,28 +637,48 @@ typedef struct Scope {
 } Scope;
 
 static void
-_scopeDeclare(Scope *scope, char *name, TypeKind type) {
+_scopeDeclare(Scope *scope, char *name, TypeKind type, bool isArray) {
 	if (scope->count == scope->capacity) {
 		scope->capacity = scope->capacity == 0 ? 8 : scope->capacity * 2;
 		scope->symbols = realloc(scope->symbols, scope->capacity * sizeof(Symbol));
 	}
 	scope->symbols[scope->count].name = name;
 	scope->symbols[scope->count].type = type;
+	scope->symbols[scope->count].isArray = isArray;
 	scope->count++;
 }
 
 static TypeKind
-_scopeLookup(Scope *scope, const char *name, bool *found) {
+_scopeLookup(Scope *scope, const char *name, bool *found, bool *isArray) {
 	for (Scope *current = scope; current != NULL; current = current->parent) {
 		for (int i = 0; i < current->count; ++i) {
 			if (strcmp(current->symbols[i].name, name) == 0) {
 				*found = true;
+				if (isArray != NULL) {
+					*isArray = current->symbols[i].isArray;
+				}
 				return current->symbols[i].type;
 			}
 		}
 	}
 	*found = false;
 	return TYPE_INT32;
+}
+
+static bool
+_isArrayName(Scope *scope, Program *program, const char *name) {
+	bool found = false;
+	bool isArray = false;
+	_scopeLookup(scope, name, &found, &isArray);
+	if (found) {
+		return isArray;
+	}
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		if (node->decl->kind == DECL_CONSTEXPR_ARRAY && strcmp(node->decl->constexprArray.name, name) == 0) {
+			return true;
+		}
+	}
+	return false;
 }
 
 static Decl *
@@ -680,7 +720,7 @@ _inferType(Expr *expr, Scope *scope, Program *program, bool *ok) {
 		return TYPE_BOOL;
 	case EXPR_IDENTIFIER: {
 		bool found = false;
-		TypeKind type = _scopeLookup(scope, expr->name, &found);
+		TypeKind type = _scopeLookup(scope, expr->name, &found, NULL);
 		if (!found) {
 			type = _constexprGlobalType(program, expr->name, &found);
 		}
@@ -715,8 +755,8 @@ _inferType(Expr *expr, Scope *scope, Program *program, bool *ok) {
 			return TYPE_BOOL;
 		case BINOP_EQ:
 		case BINOP_NEQ:
-			if (_category(left) != _category(right)) {
-				logError(_logger, "Equality operator requires operands of the same category.");
+			if (_category(left) != _category(right) || _category(left) == CAT_VOID) {
+				logError(_logger, "Equality operator requires operands of the same non-void category.");
 				*ok = false;
 			}
 			return TYPE_BOOL;
@@ -755,6 +795,11 @@ _inferType(Expr *expr, Scope *scope, Program *program, bool *ok) {
 	case EXPR_ARRAY_ACCESS: {
 		TypeKind element = _inferType(expr->arrayAccess.array, scope, program, ok);
 		TypeKind index = _inferType(expr->arrayAccess.index, scope, program, ok);
+		if (expr->arrayAccess.array->kind == EXPR_IDENTIFIER
+		    && !_isArrayName(scope, program, expr->arrayAccess.array->name)) {
+			logError(_logger, "Cannot index non-array '%s'.", expr->arrayAccess.array->name);
+			*ok = false;
+		}
 		if (_category(index) != CAT_INTEGER) {
 			logError(_logger, "Array index must be an integer.");
 			*ok = false;
@@ -844,7 +889,7 @@ _typeCheckStmt(Stmt *stmt, Scope *scope, Program *program, TypeKind returnType, 
 				*ok = false;
 			}
 		}
-		_scopeDeclare(scope, stmt->localDecl.name, stmt->localDecl.type);
+		_scopeDeclare(scope, stmt->localDecl.name, stmt->localDecl.type, stmt->localDecl.arraySize != NULL);
 		break;
 	case STMT_IF:
 		_typeCheckCondition(stmt->ifStmt.condition, scope, program, ok);
@@ -911,7 +956,8 @@ _checkTypes(Program *program) {
 				if (paramNode->param->kind == PARAM_ARRAY) {
 					_inferType(paramNode->param->arraySize, &funcScope, program, &ok);
 				}
-				_scopeDeclare(&funcScope, paramNode->param->name, paramNode->param->type);
+				_scopeDeclare(&funcScope, paramNode->param->name, paramNode->param->type,
+				              paramNode->param->kind == PARAM_ARRAY || paramNode->param->kind == PARAM_REF);
 			}
 			_typeCheckStmt(decl->func.body, &funcScope, program, decl->func.returnType, &ok);
 			free(funcScope.symbols);
@@ -952,6 +998,10 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 	}
 	if (!_checkConstexprRefParams(program)) {
 		logError(_logger, "A constexpr function cannot take reference parameters.");
+		return false;
+	}
+	if (!_checkRuntimeCallsConstexpr(program)) {
+		logError(_logger, "A constexpr function can only be called from a constexpr context.");
 		return false;
 	}
 	if (!_checkConstexprCalls(program)) {
