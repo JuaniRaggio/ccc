@@ -30,8 +30,8 @@ El análisis semántico recorre el AST completo y rechaza el programa si no se c
 | No hay recursión (directa ni mutua).                       | Grafo de llamadas + detección de ciclos (DFS).                        |
 | Las funciones `constexpr` no toman parámetros por referencia. | Inspección de los parámetros de cada declaración `constexpr`.      |
 | `constexpr` solo invoca `constexpr`, y solo se invoca desde un contexto `constexpr`. | Recorrido de contextos `constexpr` y cuerpos runtime.     |
-| El límite de un `for` es constante en tiempo de compilación. | Literal, `constexpr` global, o parámetro dentro de una `constexpr`. |
-| Solo se indexan arreglos o referencias, no escalares.      | Flag `isArray` en la tabla de símbolos.                               |
+| El límite de un `for` o `while` es constante en tiempo de compilación. | Literal, `constexpr` global, o parámetro dentro de una `constexpr`. |
+| Solo se indexan arreglos, no escalares ni referencias.     | Flag `isArray` en la tabla de símbolos (las referencias son escalares). |
 | Dentro de `__parallel` no hay dependencias de datos (RAW/WAW/WAR). | Conjuntos de lectura/escritura por sentencia.                  |
 
 Pendiente para el Stage III: tabla de símbolos y chequeo de tipos (uso de nombres no declarados, compatibilidad de tipos), y la generación de código.

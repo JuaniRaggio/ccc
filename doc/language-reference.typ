@@ -99,6 +99,19 @@ lógico si es sin signo.
 `/` y `%` no forman parte del lenguaje (división genérica costosa en hardware; se posterga). Un
 programa que los use es rechazado.
 
+= Iteración y referencias
+
+Los bucles `for` y `while` requieren que su límite/condición sea constante en tiempo de
+compilación (literal, `constexpr` global, o parámetro dentro de una función `constexpr`); se
+desenrollan. La iteración data-dependiente se reserva para el backend secuencial futuro.
+
+Las referencias (`&`) son parámetros escalares de entrada/salida y no son indexables. Un buffer se
+pasa como parámetro arreglo (`tipo nombre[tamaño]`).
+
+_Pendiente:_ el estrechamiento (@sec-int-cast) aún no se exige en el chequeo de tipos; requiere el
+nodo de cast. Hasta entonces el lint de ancho (Verilator `WIDTH`) se omite en la verificación de
+backend.
+
 = Mapeo a hardware
 
 == Combinacional por defecto
@@ -120,8 +133,9 @@ expone el resultado en una señal que reemplaza a la llamada en la expresión.
 
 == `constexpr`
 
-Las variables `constexpr` se emiten como `localparam` en un _package_ compartido; las funciones
-`constexpr` no generan hardware (se evalúan en compilación).
+Las variables y arreglos `constexpr` se evalúan en compilación y se emiten como `localparam` en un
+_package_ compartido (los arreglos, con sus valores ya resueltos). Las funciones `constexpr` no
+generan hardware.
 
 == Futuro: lógica secuencial
 
