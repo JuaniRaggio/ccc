@@ -1,4 +1,5 @@
 #include "SemanticAnalyzer.h"
+#include "frontend/syntactic-analysis/AstWalk.h"
 #include <string.h>
 
 static Logger *_logger = NULL;
@@ -17,9 +18,6 @@ initializeSemanticAnalysisModule(void) {
 	_logger = createLogger("SemanticAnalyzer");
 	return _shutdownSemanticAnalysisModule;
 }
-
-typedef void (*ExprVisitor)(Expr *expr, void *context);
-typedef void (*StmtVisitor)(Stmt *stmt, void *context);
 
 static bool
 _isFunctionDecl(const Decl *decl) {
@@ -59,127 +57,6 @@ _isConstexprFunction(Program *program, const char *name) {
 		}
 	}
 	return false;
-}
-
-static void
-_walkExpr(Expr *expr, ExprVisitor visit, void *context) {
-	if (expr == NULL) {
-		return;
-	}
-	visit(expr, context);
-	switch (expr->kind) {
-	case EXPR_BINARY:
-		_walkExpr(expr->binary.left, visit, context);
-		_walkExpr(expr->binary.right, visit, context);
-		break;
-	case EXPR_UNARY:
-		_walkExpr(expr->unary.operand, visit, context);
-		break;
-	case EXPR_ASSIGN:
-		_walkExpr(expr->assign.target, visit, context);
-		_walkExpr(expr->assign.value, visit, context);
-		break;
-	case EXPR_ARRAY_ACCESS:
-		_walkExpr(expr->arrayAccess.array, visit, context);
-		_walkExpr(expr->arrayAccess.index, visit, context);
-		break;
-	case EXPR_CALL:
-		for (ExprList *argNode = expr->call.args; argNode != NULL; argNode = argNode->next) {
-			_walkExpr(argNode->expr, visit, context);
-		}
-		break;
-	case EXPR_INTRINSIC:
-		for (ExprList *argNode = expr->intrinsic.args; argNode != NULL; argNode = argNode->next) {
-			_walkExpr(argNode->expr, visit, context);
-		}
-		break;
-	case EXPR_POST_INC:
-	case EXPR_POST_DEC:
-		_walkExpr(expr->postOp, visit, context);
-		break;
-	default:
-		break;
-	}
-}
-
-static void
-_walkStmtExprs(Stmt *stmt, ExprVisitor visit, void *context) {
-	if (stmt == NULL) {
-		return;
-	}
-	switch (stmt->kind) {
-	case STMT_EXPR:
-		_walkExpr(stmt->exprStmt, visit, context);
-		break;
-	case STMT_LOCAL_DECL:
-		_walkExpr(stmt->localDecl.arraySize, visit, context);
-		_walkExpr(stmt->localDecl.init, visit, context);
-		for (ExprList *initNode = stmt->localDecl.initList; initNode != NULL; initNode = initNode->next) {
-			_walkExpr(initNode->expr, visit, context);
-		}
-		break;
-	case STMT_IF:
-		_walkExpr(stmt->ifStmt.condition, visit, context);
-		_walkStmtExprs(stmt->ifStmt.thenBranch, visit, context);
-		_walkStmtExprs(stmt->ifStmt.elseBranch, visit, context);
-		break;
-	case STMT_FOR:
-		_walkStmtExprs(stmt->forStmt.init, visit, context);
-		_walkExpr(stmt->forStmt.condition, visit, context);
-		_walkExpr(stmt->forStmt.update, visit, context);
-		_walkStmtExprs(stmt->forStmt.body, visit, context);
-		break;
-	case STMT_WHILE:
-		_walkExpr(stmt->whileStmt.condition, visit, context);
-		_walkStmtExprs(stmt->whileStmt.body, visit, context);
-		break;
-	case STMT_RETURN:
-		_walkExpr(stmt->returnExpr, visit, context);
-		break;
-	case STMT_COMPOUND:
-		for (StmtList *stmtNode = stmt->compound; stmtNode != NULL; stmtNode = stmtNode->next) {
-			_walkStmtExprs(stmtNode->stmt, visit, context);
-		}
-		break;
-	case STMT_PARALLEL:
-		for (StmtList *stmtNode = stmt->parallel; stmtNode != NULL; stmtNode = stmtNode->next) {
-			_walkStmtExprs(stmtNode->stmt, visit, context);
-		}
-		break;
-	}
-}
-
-static void
-_walkStmts(Stmt *stmt, StmtVisitor visit, void *context) {
-	if (stmt == NULL) {
-		return;
-	}
-	visit(stmt, context);
-	switch (stmt->kind) {
-	case STMT_IF:
-		_walkStmts(stmt->ifStmt.thenBranch, visit, context);
-		_walkStmts(stmt->ifStmt.elseBranch, visit, context);
-		break;
-	case STMT_FOR:
-		_walkStmts(stmt->forStmt.init, visit, context);
-		_walkStmts(stmt->forStmt.body, visit, context);
-		break;
-	case STMT_WHILE:
-		_walkStmts(stmt->whileStmt.body, visit, context);
-		break;
-	case STMT_COMPOUND:
-		for (StmtList *stmtNode = stmt->compound; stmtNode != NULL; stmtNode = stmtNode->next) {
-			_walkStmts(stmtNode->stmt, visit, context);
-		}
-		break;
-	case STMT_PARALLEL:
-		for (StmtList *stmtNode = stmt->parallel; stmtNode != NULL; stmtNode = stmtNode->next) {
-			_walkStmts(stmtNode->stmt, visit, context);
-		}
-		break;
-	default:
-		break;
-	}
 }
 
 typedef struct {
@@ -244,7 +121,7 @@ _checkNoRecursion(Program *program) {
 			.functionCount = functionCount,
 			.adjacencyRow = &adjacency[caller * functionCount],
 		};
-		_walkStmtExprs(functions[caller]->func.body, _collectCallEdges, &graph);
+		walkStmtExprs(functions[caller]->func.body, _collectCallEdges, &graph);
 	}
 	int *color = calloc(functionCount, sizeof(int));
 	bool cyclic = false;
@@ -295,16 +172,16 @@ _checkConstexprCalls(Program *program) {
 		Decl *decl = node->decl;
 		switch (decl->kind) {
 		case DECL_CONSTEXPR_VAR:
-			_walkExpr(decl->constexprVar.init, _checkConstexprCall, &scope);
+			walkExpr(decl->constexprVar.init, _checkConstexprCall, &scope);
 			break;
 		case DECL_CONSTEXPR_ARRAY:
-			_walkExpr(decl->constexprArray.size, _checkConstexprCall, &scope);
+			walkExpr(decl->constexprArray.size, _checkConstexprCall, &scope);
 			for (ExprList *initNode = decl->constexprArray.init; initNode != NULL; initNode = initNode->next) {
-				_walkExpr(initNode->expr, _checkConstexprCall, &scope);
+				walkExpr(initNode->expr, _checkConstexprCall, &scope);
 			}
 			break;
 		case DECL_CONSTEXPR_FUNC:
-			_walkStmtExprs(decl->func.body, _checkConstexprCall, &scope);
+			walkStmtExprs(decl->func.body, _checkConstexprCall, &scope);
 			break;
 		default:
 			break;
@@ -326,7 +203,7 @@ _checkRuntimeCallsConstexpr(Program *program) {
 	ConstexprScope scope = { .program = program, .violation = false };
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
 		if (node->decl->kind == DECL_FUNCTION) {
-			_walkStmtExprs(node->decl->func.body, _checkRuntimeCall, &scope);
+			walkStmtExprs(node->decl->func.body, _checkRuntimeCall, &scope);
 		}
 	}
 	return !scope.violation;
@@ -381,7 +258,7 @@ _checkForBound(Stmt *stmt, void *context) {
 		return;
 	}
 	scope->inductionVar = _inductionVariable(stmt->forStmt.init);
-	_walkExpr(stmt->forStmt.condition, _checkBoundIdentifier, scope);
+	walkExpr(stmt->forStmt.condition, _checkBoundIdentifier, scope);
 }
 
 static bool
@@ -408,7 +285,7 @@ _checkForBounds(Program *program) {
 			.inductionVar = NULL,
 			.violation = false,
 		};
-		_walkStmts(decl->func.body, _checkForBound, &scope);
+		walkStmts(decl->func.body, _checkForBound, &scope);
 		free(params);
 		if (scope.violation) {
 			return false;
@@ -604,7 +481,7 @@ _checkParallelDependencies(Program *program) {
 	ParallelScope scope = { .violation = false };
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
 		if (_isFunctionDecl(node->decl)) {
-			_walkStmts(node->decl->func.body, _checkParallelBlock, &scope);
+			walkStmts(node->decl->func.body, _checkParallelBlock, &scope);
 		}
 	}
 	return !scope.violation;
