@@ -53,7 +53,7 @@ El compilador procesa un programa en cuatro fases. Las tres primeras forman el *
 Dos capas:
 
 1. **Frontend: aceptación/rechazo por código de salida** (`src/main/bash/test.sh`). Cada programa en `src/test/c/accept/` debe salir con código `0`; cada uno en `src/test/c/reject/` debe salir con código distinto de `0`.
-2. **Backend: lint y simulación del SystemVerilog generado** (`src/main/bash/verilog.sh`). Verilator verifica que la salida sea sintetizable; Icarus la simula contra un testbench cuando existe.
+2. **Backend: lint y simulación del SystemVerilog generado**. `src/main/bash/test-backend.sh` corre el compilador sobre cada programa de `accept/` y lintea su salida con Verilator. `src/main/bash/verilog.sh` lintea (Verilator) y simula (Icarus, si hay testbench) los módulos de `doc/examples`. Ambos requieren Verilator (incluido en la imagen Docker).
 
 Opciones consideradas para la capa de frontend y por qué elegimos la actual:
 
