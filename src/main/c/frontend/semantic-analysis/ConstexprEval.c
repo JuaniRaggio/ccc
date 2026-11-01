@@ -2,7 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define LOOP_CAP (1 << 24)
+#define EVAL_BUDGET (1 << 24)
+
+static long _budget;
 
 typedef struct {
 	char **names;
@@ -43,16 +45,26 @@ _envGet(Env *env, const char *name, long *out) {
 	return false;
 }
 
+static const char *
+_declName(Decl *decl) {
+	switch (decl->kind) {
+	case DECL_CONSTEXPR_FUNC:
+		return decl->func.name;
+	case DECL_CONSTEXPR_VAR:
+		return decl->constexprVar.name;
+	case DECL_CONSTEXPR_ARRAY:
+		return decl->constexprArray.name;
+	default:
+		return NULL;
+	}
+}
+
 static Decl *
 _findDecl(Program *program, const char *name, DeclKind kind) {
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
-		if (node->decl->kind == kind) {
-			const char *declName = kind == DECL_CONSTEXPR_FUNC  ? node->decl->func.name
-			                       : kind == DECL_CONSTEXPR_VAR ? node->decl->constexprVar.name
-			                                                    : node->decl->constexprArray.name;
-			if (strcmp(declName, name) == 0) {
-				return node->decl;
-			}
+		const char *declName = _declName(node->decl);
+		if (node->decl->kind == kind && declName != NULL && strcmp(declName, name) == 0) {
+			return node->decl;
 		}
 	}
 	return NULL;
@@ -73,8 +85,16 @@ _evalBinary(Expr *expr, Program *program, Env *env, bool *ok) {
 	case BINOP_MUL:
 		return left * right;
 	case BINOP_LSHIFT:
+		if (right < 0 || right >= 64) {
+			*ok = false;
+			return 0;
+		}
 		return left << right;
 	case BINOP_RSHIFT:
+		if (right < 0 || right >= 64) {
+			*ok = false;
+			return 0;
+		}
 		return left >> right;
 	case BINOP_EQ:
 		return left == right;
@@ -188,9 +208,17 @@ _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 	case EXPR_CALL:
 		return _evalCall(expr, program, env, ok);
 	case EXPR_INTRINSIC: {
+		if (expr->intrinsic.args == NULL) {
+			*ok = false;
+			return 0;
+		}
 		long first = _eval(expr->intrinsic.args->expr, program, env, ok);
 		if (expr->intrinsic.kind == INTRINSIC_ABS) {
 			return first < 0 ? -first : first;
+		}
+		if (expr->intrinsic.args->next == NULL) {
+			*ok = false;
+			return 0;
 		}
 		long second = _eval(expr->intrinsic.args->next->expr, program, env, ok);
 		if (expr->intrinsic.kind == INTRINSIC_MIN) {
@@ -234,7 +262,11 @@ _exec(Stmt *stmt, Program *program, Env *env, bool *ok, bool *returned, long *re
 		break;
 	case STMT_FOR:
 		_exec(stmt->forStmt.init, program, env, ok, returned, retval);
-		for (int guard = 0; guard < LOOP_CAP && *ok && !*returned; ++guard) {
+		while (*ok && !*returned) {
+			if (_budget-- <= 0) {
+				*ok = false;
+				break;
+			}
 			if (!_eval(stmt->forStmt.condition, program, env, ok)) {
 				break;
 			}
@@ -243,7 +275,11 @@ _exec(Stmt *stmt, Program *program, Env *env, bool *ok, bool *returned, long *re
 		}
 		break;
 	case STMT_WHILE:
-		for (int guard = 0; guard < LOOP_CAP && *ok && !*returned; ++guard) {
+		while (*ok && !*returned) {
+			if (_budget-- <= 0) {
+				*ok = false;
+				break;
+			}
 			if (!_eval(stmt->whileStmt.condition, program, env, ok)) {
 				break;
 			}
@@ -270,6 +306,7 @@ _exec(Stmt *stmt, Program *program, Env *env, bool *ok, bool *returned, long *re
 bool
 evalConstexpr(Expr *expr, Program *program, long *out) {
 	bool ok = true;
+	_budget = EVAL_BUDGET;
 	long value = _eval(expr, program, NULL, &ok);
 	if (ok) {
 		*out = value;

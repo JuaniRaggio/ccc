@@ -46,13 +46,20 @@ initializeGeneratorModule(void) {
 static bool
 _isReservedSV(const char *name) {
 	static const char *keywords[]
-	    = { "buf",       "wire",    "reg",     "and",       "or",         "not",       "nand",    "nor",
-	        "xor",       "xnor",    "logic",   "bit",       "byte",       "time",      "real",    "event",
-	        "table",     "input",   "output",  "inout",     "module",     "endmodule", "begin",   "end",
-	        "always",    "assign",  "initial", "parameter", "localparam", "genvar",    "signed",  "unsigned",
-	        "tri",       "supply0", "supply1", "posedge",   "negedge",    "edge",      "disable", "force",
-	        "release",   "fork",    "join",    "task",      "function",   "casex",     "casez",   "specify",
-	        "primitive", "cell",    "config",  "wait",      "automatic",  "final",     NULL };
+	    = { "buf",       "wire",     "reg",       "and",       "or",         "not",        "nand",     "nor",
+	        "xor",       "xnor",     "logic",     "bit",       "byte",       "time",       "real",     "event",
+	        "table",     "input",    "output",    "inout",     "module",     "endmodule",  "begin",    "end",
+	        "always",    "assign",   "initial",   "parameter", "localparam", "genvar",     "signed",   "unsigned",
+	        "tri",       "supply0",  "supply1",   "posedge",   "negedge",    "edge",       "disable",  "force",
+	        "release",   "fork",     "join",      "task",      "function",   "casex",      "casez",    "specify",
+	        "primitive", "cell",     "config",    "wait",      "automatic",  "final",      "int",      "integer",
+	        "longint",   "shortint", "shortreal", "realtime",  "string",     "type",       "typedef",  "const",
+	        "static",    "class",    "interface", "package",   "endpackage", "program",    "struct",   "union",
+	        "enum",      "var",      "ref",       "virtual",   "extends",    "super",      "this",     "null",
+	        "new",       "local",    "protected", "rand",      "randc",      "constraint", "generate", "endgenerate",
+	        "forever",   "repeat",   "foreach",   "do",        "break",      "continue",   "assert",   "assume",
+	        "cover",     "bind",     "import",    "export",    "extern",     "wand",       "wor",      "chandle",
+	        "modport",   "clocking", "property",  "sequence",  "case",       "endcase",    "default",  NULL };
 	for (int i = 0; keywords[i] != NULL; ++i) {
 		if (strcmp(keywords[i], name) == 0) {
 			return true;
@@ -105,6 +112,9 @@ static void _emitExpr(Expr *expr);
 
 static void
 _emitIntrinsic(Expr *expr) {
+	if (expr->intrinsic.args == NULL) {
+		return;
+	}
 	Expr *first = expr->intrinsic.args->expr;
 	if (expr->intrinsic.kind == INTRINSIC_ABS) {
 		fprintf(stdout, "(");
@@ -114,6 +124,9 @@ _emitIntrinsic(Expr *expr) {
 		fprintf(stdout, " : ");
 		_emitExpr(first);
 		fprintf(stdout, ")");
+		return;
+	}
+	if (expr->intrinsic.args->next == NULL) {
 		return;
 	}
 	Expr *second = expr->intrinsic.args->next->expr;
@@ -498,8 +511,32 @@ _emitModule(Decl *function, bool importPackage) {
 	_callCount = 0;
 }
 
+static long
+_maskToType(long value, TypeKind type) {
+	int width = type == TYPE_BOOL ? 1 : _bitWidth(type);
+	if (width >= 64) {
+		return value;
+	}
+	unsigned long mask = (1UL << width) - 1UL;
+	unsigned long bits = (unsigned long)value & mask;
+	if (_isSigned(type) && (bits & (1UL << (width - 1)))) {
+		bits |= ~mask;
+	}
+	return (long)bits;
+}
+
 static void
-_emitConstexprValue(Expr *expr) {
+_emitConstexprValue(Expr *expr, TypeKind type) {
+	long value;
+	if (evalConstexpr(expr, _program, &value)) {
+		fprintf(stdout, "%ld", _maskToType(value, type));
+	} else {
+		_emitExpr(expr);
+	}
+}
+
+static void
+_emitConstexprSize(Expr *expr) {
 	long value;
 	if (evalConstexpr(expr, _program, &value)) {
 		fprintf(stdout, "%ld", value);
@@ -529,7 +566,7 @@ _emitPackage(Program *program) {
 			fprintf(stdout, " ");
 			_emitIdent(decl->constexprVar.name);
 			fprintf(stdout, " = ");
-			_emitConstexprValue(decl->constexprVar.init);
+			_emitConstexprValue(decl->constexprVar.init, decl->constexprVar.type);
 			fprintf(stdout, ";\n");
 		} else if (decl->kind == DECL_CONSTEXPR_ARRAY) {
 			fprintf(stdout, "  localparam ");
@@ -537,10 +574,10 @@ _emitPackage(Program *program) {
 			fprintf(stdout, " ");
 			_emitIdent(decl->constexprArray.name);
 			fprintf(stdout, " [");
-			_emitConstexprValue(decl->constexprArray.size);
+			_emitConstexprSize(decl->constexprArray.size);
 			fprintf(stdout, "] = '{");
 			for (ExprList *element = decl->constexprArray.init; element != NULL; element = element->next) {
-				_emitConstexprValue(element->expr);
+				_emitConstexprValue(element->expr, decl->constexprArray.type);
 				if (element->next != NULL) {
 					fprintf(stdout, ", ");
 				}
