@@ -20,13 +20,13 @@ main(const int length, const char **arguments) {
 	for (int k = 0; k < length; ++k) {
 		logDebugging(logger, "Argument %d: \"%s\"", k, arguments[k]);
 	}
-	CompilerState compilerState = { .abstractSyntaxtTree = NULL };
+	CompilerState compilerState = { .abstractSyntaxTree = NULL };
 	ModuleDestructor moduleDestructors[]
 	    = { initializeAbstractSyntaxTreeModule(),         initializeFlexActionsModule(lexicalAnalyzer),
 		    initializeBisonActionsModule(&compilerState), initializeFrontendModule(lexicalAnalyzer),
 		    initializeSemanticAnalysisModule(),           initializeGeneratorModule() };
 	CompilationStatus compilationStatus = executeSyntacticAnalysis();
-	Program *program = compilerState.abstractSyntaxtTree;
+	Program *program = compilerState.abstractSyntaxTree;
 	if (compilationStatus != SUCCEEDED) {
 		logError(logger, "The syntactic-analysis phase rejects the input program.");
 		compilationStatus = FAILED;

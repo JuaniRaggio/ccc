@@ -489,7 +489,7 @@ _emitPackage(Program *program) {
 void
 executeGenerator(CompilerState *compilerState) {
 	logDebugging(_logger, "Generating SystemVerilog...");
-	Program *program = compilerState->abstractSyntaxtTree;
+	Program *program = compilerState->abstractSyntaxTree;
 	if (program == NULL) {
 		return;
 	}

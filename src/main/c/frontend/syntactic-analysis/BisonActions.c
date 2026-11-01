@@ -51,7 +51,7 @@ ProgramSemanticAction(DeclList *decls) {
 	_logSyntacticAnalyzerAction(__FUNCTION__);
 	Program *program = calloc(1, sizeof(Program));
 	program->decls = decls;
-	_compilerState->abstractSyntaxtTree = program;
+	_compilerState->abstractSyntaxTree = program;
 	return program;
 }
 

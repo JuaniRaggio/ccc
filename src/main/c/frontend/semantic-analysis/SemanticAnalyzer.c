@@ -861,7 +861,7 @@ _checkTypes(Program *program) {
 bool
 executeSemanticAnalysis(CompilerState *compilerState) {
 	logDebugging(_logger, "Analyzing semantics...");
-	Program *program = compilerState->abstractSyntaxtTree;
+	Program *program = compilerState->abstractSyntaxTree;
 	if (program == NULL) {
 		return true;
 	}
