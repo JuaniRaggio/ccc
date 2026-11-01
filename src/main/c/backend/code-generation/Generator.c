@@ -1,4 +1,5 @@
 #include "Generator.h"
+#include "frontend/semantic-analysis/ConstexprEval.h"
 #include "frontend/syntactic-analysis/AstWalk.h"
 #include <string.h>
 
@@ -40,6 +41,33 @@ ModuleDestructor
 initializeGeneratorModule(void) {
 	_logger = createLogger("Generator");
 	return _shutdownGeneratorModule;
+}
+
+static bool
+_isReservedSV(const char *name) {
+	static const char *keywords[]
+	    = { "buf",       "wire",    "reg",     "and",       "or",         "not",       "nand",    "nor",
+	        "xor",       "xnor",    "logic",   "bit",       "byte",       "time",      "real",    "event",
+	        "table",     "input",   "output",  "inout",     "module",     "endmodule", "begin",   "end",
+	        "always",    "assign",  "initial", "parameter", "localparam", "genvar",    "signed",  "unsigned",
+	        "tri",       "supply0", "supply1", "posedge",   "negedge",    "edge",      "disable", "force",
+	        "release",   "fork",    "join",    "task",      "function",   "casex",     "casez",   "specify",
+	        "primitive", "cell",    "config",  "wait",      "automatic",  "final",     NULL };
+	for (int i = 0; keywords[i] != NULL; ++i) {
+		if (strcmp(keywords[i], name) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void
+_emitIdent(const char *name) {
+	if (_isReservedSV(name)) {
+		fprintf(stdout, "\\%s ", name);
+	} else {
+		fprintf(stdout, "%s", name);
+	}
 }
 
 static int
@@ -146,7 +174,7 @@ _emitExpr(Expr *expr) {
 		fprintf(stdout, "1'b%d", expr->boolValue ? 1 : 0);
 		break;
 	case EXPR_IDENTIFIER:
-		fprintf(stdout, "%s", expr->name);
+		_emitIdent(expr->name);
 		break;
 	case EXPR_BINARY:
 		fprintf(stdout, "(");
@@ -249,14 +277,16 @@ _emitStmt(Stmt *stmt, int indent) {
 	case STMT_LOCAL_DECL:
 		if (stmt->localDecl.init != NULL) {
 			_emitIndent(indent);
-			fprintf(stdout, "%s = ", stmt->localDecl.name);
+			_emitIdent(stmt->localDecl.name);
+			fprintf(stdout, " = ");
 			_emitExpr(stmt->localDecl.init);
 			fprintf(stdout, ";\n");
 		}
 		int index = 0;
 		for (ExprList *initNode = stmt->localDecl.initList; initNode != NULL; initNode = initNode->next) {
 			_emitIndent(indent);
-			fprintf(stdout, "%s[%d] = ", stmt->localDecl.name, index++);
+			_emitIdent(stmt->localDecl.name);
+			fprintf(stdout, "[%d] = ", index++);
 			_emitExpr(initNode->expr);
 			fprintf(stdout, ";\n");
 		}
@@ -277,7 +307,8 @@ _emitStmt(Stmt *stmt, int indent) {
 		_emitIndent(indent);
 		fprintf(stdout, "for (");
 		if (stmt->forStmt.init != NULL && stmt->forStmt.init->kind == STMT_LOCAL_DECL) {
-			fprintf(stdout, "%s = ", stmt->forStmt.init->localDecl.name);
+			_emitIdent(stmt->forStmt.init->localDecl.name);
+			fprintf(stdout, " = ");
 			_emitExpr(stmt->forStmt.init->localDecl.init);
 		} else if (stmt->forStmt.init != NULL) {
 			_emitStep(stmt->forStmt.init->exprStmt);
@@ -329,7 +360,8 @@ _emitLocalDecl(Stmt *stmt, void *context) {
 	}
 	fprintf(stdout, "  ");
 	_emitType(stmt->localDecl.type);
-	fprintf(stdout, " %s", stmt->localDecl.name);
+	fprintf(stdout, " ");
+	_emitIdent(stmt->localDecl.name);
 	if (stmt->localDecl.arraySize != NULL) {
 		fprintf(stdout, " [");
 		_emitExpr(stmt->localDecl.arraySize);
@@ -353,7 +385,8 @@ _emitPort(Param *param, bool last) {
 	const char *direction = param->kind == PARAM_REF ? "output" : "input ";
 	fprintf(stdout, "  %s ", direction);
 	_emitType(param->type);
-	fprintf(stdout, " %s", param->name);
+	fprintf(stdout, " ");
+	_emitIdent(param->name);
 	if (param->kind == PARAM_ARRAY) {
 		fprintf(stdout, " [");
 		_emitExpr(param->arraySize);
@@ -396,11 +429,15 @@ _emitInstances(CallList *calls) {
 	for (int i = 0; i < calls->count; ++i) {
 		Expr *call = calls->items[i];
 		Decl *callee = _findFunctionDecl(call->call.name);
-		fprintf(stdout, "  %s __u%d (", call->call.name, i);
+		fprintf(stdout, "  ");
+		_emitIdent(call->call.name);
+		fprintf(stdout, " __u%d (", i);
 		ParamList *param = callee != NULL ? callee->func.params : NULL;
 		for (ExprList *argNode = call->call.args; argNode != NULL && param != NULL;
 		     argNode = argNode->next, param = param->next) {
-			fprintf(stdout, ".%s(", param->param->name);
+			fprintf(stdout, ".");
+			_emitIdent(param->param->name);
+			fprintf(stdout, "(");
 			_emitExpr(argNode->expr);
 			fprintf(stdout, "), ");
 		}
@@ -410,7 +447,8 @@ _emitInstances(CallList *calls) {
 
 static void
 _emitModule(Decl *function, bool importPackage) {
-	fprintf(stdout, "module %s", function->func.name);
+	fprintf(stdout, "module ");
+	_emitIdent(function->func.name);
 	if (importPackage) {
 		fprintf(stdout, " import ccc_pkg::*;");
 	}
@@ -460,11 +498,21 @@ _emitModule(Decl *function, bool importPackage) {
 	_callCount = 0;
 }
 
+static void
+_emitConstexprValue(Expr *expr) {
+	long value;
+	if (evalConstexpr(expr, _program, &value)) {
+		fprintf(stdout, "%ld", value);
+	} else {
+		_emitExpr(expr);
+	}
+}
+
 static bool
 _emitPackage(Program *program) {
 	bool any = false;
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
-		if (node->decl->kind == DECL_CONSTEXPR_VAR) {
+		if (node->decl->kind == DECL_CONSTEXPR_VAR || node->decl->kind == DECL_CONSTEXPR_ARRAY) {
 			any = true;
 			break;
 		}
@@ -474,12 +522,30 @@ _emitPackage(Program *program) {
 	}
 	fprintf(stdout, "package ccc_pkg;\n");
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
-		if (node->decl->kind == DECL_CONSTEXPR_VAR) {
+		Decl *decl = node->decl;
+		if (decl->kind == DECL_CONSTEXPR_VAR) {
 			fprintf(stdout, "  localparam ");
-			_emitType(node->decl->constexprVar.type);
-			fprintf(stdout, " %s = ", node->decl->constexprVar.name);
-			_emitExpr(node->decl->constexprVar.init);
+			_emitType(decl->constexprVar.type);
+			fprintf(stdout, " ");
+			_emitIdent(decl->constexprVar.name);
+			fprintf(stdout, " = ");
+			_emitConstexprValue(decl->constexprVar.init);
 			fprintf(stdout, ";\n");
+		} else if (decl->kind == DECL_CONSTEXPR_ARRAY) {
+			fprintf(stdout, "  localparam ");
+			_emitType(decl->constexprArray.type);
+			fprintf(stdout, " ");
+			_emitIdent(decl->constexprArray.name);
+			fprintf(stdout, " [");
+			_emitConstexprValue(decl->constexprArray.size);
+			fprintf(stdout, "] = '{");
+			for (ExprList *element = decl->constexprArray.init; element != NULL; element = element->next) {
+				_emitConstexprValue(element->expr);
+				if (element->next != NULL) {
+					fprintf(stdout, ", ");
+				}
+			}
+			fprintf(stdout, "};\n");
 		}
 	}
 	fprintf(stdout, "endpackage\n\n");

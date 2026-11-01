@@ -252,17 +252,19 @@ _inductionVariable(Stmt *init) {
 }
 
 static void
-_checkForBound(Stmt *stmt, void *context) {
+_checkLoopBound(Stmt *stmt, void *context) {
 	ForBoundScope *scope = context;
-	if (stmt->kind != STMT_FOR) {
-		return;
+	if (stmt->kind == STMT_FOR) {
+		scope->inductionVar = _inductionVariable(stmt->forStmt.init);
+		walkExpr(stmt->forStmt.condition, _checkBoundIdentifier, scope);
+	} else if (stmt->kind == STMT_WHILE) {
+		scope->inductionVar = NULL;
+		walkExpr(stmt->whileStmt.condition, _checkBoundIdentifier, scope);
 	}
-	scope->inductionVar = _inductionVariable(stmt->forStmt.init);
-	walkExpr(stmt->forStmt.condition, _checkBoundIdentifier, scope);
 }
 
 static bool
-_checkForBounds(Program *program) {
+_checkLoopBounds(Program *program) {
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
 		Decl *decl = node->decl;
 		if (!_isFunctionDecl(decl)) {
@@ -285,7 +287,7 @@ _checkForBounds(Program *program) {
 			.inductionVar = NULL,
 			.violation = false,
 		};
-		walkStmts(decl->func.body, _checkForBound, &scope);
+		walkStmts(decl->func.body, _checkLoopBound, &scope);
 		free(params);
 		if (scope.violation) {
 			return false;
@@ -834,7 +836,7 @@ _checkTypes(Program *program) {
 					_inferType(paramNode->param->arraySize, &funcScope, program, &ok);
 				}
 				_scopeDeclare(&funcScope, paramNode->param->name, paramNode->param->type,
-				              paramNode->param->kind == PARAM_ARRAY || paramNode->param->kind == PARAM_REF);
+				              paramNode->param->kind == PARAM_ARRAY);
 			}
 			_typeCheckStmt(decl->func.body, &funcScope, program, decl->func.returnType, &ok);
 			free(funcScope.symbols);
@@ -885,8 +887,8 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 		logError(_logger, "A constexpr context can only call constexpr functions.");
 		return false;
 	}
-	if (!_checkForBounds(program)) {
-		logError(_logger, "The bound of a for loop must be a compile-time constant.");
+	if (!_checkLoopBounds(program)) {
+		logError(_logger, "The bound of a for or while loop must be a compile-time constant.");
 		return false;
 	}
 	if (!_checkParallelDependencies(program)) {
