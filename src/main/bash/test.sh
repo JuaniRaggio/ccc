@@ -40,5 +40,7 @@ for test in $(ls src/test/c/reject/); do
 done
 echo ""
 
+bash "$(dirname "$0")/test-backend.sh" || STATUS=1
+
 echo "All done."
 exit $STATUS

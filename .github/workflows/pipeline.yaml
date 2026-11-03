@@ -16,7 +16,9 @@ jobs:
             cmake \
             flex \
             gcc \
-            make
+            iverilog \
+            make \
+            verilator
           chmod u+x --recursive src/main/bash
       - name: "Build."
         run: |

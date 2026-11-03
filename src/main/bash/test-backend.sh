@@ -25,8 +25,7 @@ for test in $(ls src/test/c/accept/); do
 	sv="$OUT/$test.sv"
 	LOGGING_LEVEL=CRITICAL ".build/Flex-Bison-Compiler" <"src/test/c/accept/$test" >"$sv" 2>/dev/null
 	# -Wno-MULTITOP: a file of independent modules has no single top (expected for a module library).
-	# -Wno-WIDTH: width mismatches are owned by the language type system (narrowing/cast rules), not Verilator.
-	if verilator --lint-only -Wno-MULTITOP -Wno-WIDTH "$sv" >/dev/null 2>&1; then
+	if verilator --lint-only -Wno-MULTITOP "$sv" >/dev/null 2>&1; then
 		echo -e "    $test, ${GREEN}lint ok${OFF}"
 	else
 		STATUS=1
