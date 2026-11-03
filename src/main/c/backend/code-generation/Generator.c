@@ -193,9 +193,17 @@ _emitExpr(Expr *expr) {
 		_emitIntrinsic(expr);
 		break;
 	case EXPR_CAST:
-		fprintf(stdout, "%d'(", typeWidth(expr->cast.type));
-		_emitExpr(expr->cast.operand);
-		fprintf(stdout, ")");
+		/* W'(x) truncates/zero-extends; signed'(...) reinterprets as signed so it
+		 * sign-extends in wider contexts, matching maskToType. */
+		if (typeSigned(expr->cast.type)) {
+			fprintf(stdout, "signed'(%d'(", typeWidth(expr->cast.type));
+			_emitExpr(expr->cast.operand);
+			fprintf(stdout, "))");
+		} else {
+			fprintf(stdout, "%d'(", typeWidth(expr->cast.type));
+			_emitExpr(expr->cast.operand);
+			fprintf(stdout, ")");
+		}
 		break;
 	default:
 		_emitExpr(expr->postOp);

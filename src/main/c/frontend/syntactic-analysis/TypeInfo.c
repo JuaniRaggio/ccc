@@ -12,6 +12,9 @@ typeWidth(TypeKind type) {
 	case TYPE_INT64:
 	case TYPE_UINT64:
 		return 64;
+	case TYPE_INT32:
+	case TYPE_UINT32:
+		return 32;
 	case TYPE_BOOL:
 		return 1;
 	default:
