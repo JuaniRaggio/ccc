@@ -49,19 +49,19 @@ static bool
 _isReservedSV(const char *name) {
 	static const char *keywords[]
 	    = { "buf",       "wire",     "reg",       "and",       "or",         "not",        "nand",     "nor",
-	        "xor",       "xnor",     "logic",     "bit",       "byte",       "time",       "real",     "event",
-	        "table",     "input",    "output",    "inout",     "module",     "endmodule",  "begin",    "end",
-	        "always",    "assign",   "initial",   "parameter", "localparam", "genvar",     "signed",   "unsigned",
-	        "tri",       "supply0",  "supply1",   "posedge",   "negedge",    "edge",       "disable",  "force",
-	        "release",   "fork",     "join",      "task",      "function",   "casex",      "casez",    "specify",
-	        "primitive", "cell",     "config",    "wait",      "automatic",  "final",      "int",      "integer",
-	        "longint",   "shortint", "shortreal", "realtime",  "string",     "type",       "typedef",  "const",
-	        "static",    "class",    "interface", "package",   "endpackage", "program",    "struct",   "union",
-	        "enum",      "var",      "ref",       "virtual",   "extends",    "super",      "this",     "null",
-	        "new",       "local",    "protected", "rand",      "randc",      "constraint", "generate", "endgenerate",
-	        "forever",   "repeat",   "foreach",   "do",        "break",      "continue",   "assert",   "assume",
-	        "cover",     "bind",     "import",    "export",    "extern",     "wand",       "wor",      "chandle",
-	        "modport",   "clocking", "property",  "sequence",  "case",       "endcase",    "default",  NULL };
+		    "xor",       "xnor",     "logic",     "bit",       "byte",       "time",       "real",     "event",
+		    "table",     "input",    "output",    "inout",     "module",     "endmodule",  "begin",    "end",
+		    "always",    "assign",   "initial",   "parameter", "localparam", "genvar",     "signed",   "unsigned",
+		    "tri",       "supply0",  "supply1",   "posedge",   "negedge",    "edge",       "disable",  "force",
+		    "release",   "fork",     "join",      "task",      "function",   "casex",      "casez",    "specify",
+		    "primitive", "cell",     "config",    "wait",      "automatic",  "final",      "int",      "integer",
+		    "longint",   "shortint", "shortreal", "realtime",  "string",     "type",       "typedef",  "const",
+		    "static",    "class",    "interface", "package",   "endpackage", "program",    "struct",   "union",
+		    "enum",      "var",      "ref",       "virtual",   "extends",    "super",      "this",     "null",
+		    "new",       "local",    "protected", "rand",      "randc",      "constraint", "generate", "endgenerate",
+		    "forever",   "repeat",   "foreach",   "do",        "break",      "continue",   "assert",   "assume",
+		    "cover",     "bind",     "import",    "export",    "extern",     "wand",       "wor",      "chandle",
+		    "modport",   "clocking", "property",  "sequence",  "case",       "endcase",    "default",  NULL };
 	for (int i = 0; keywords[i] != NULL; ++i) {
 		if (strcmp(keywords[i], name) == 0) {
 			return true;
