@@ -890,6 +890,77 @@ _checkTypes(Program *program) {
 	return ok;
 }
 
+typedef struct {
+	Program *program;
+	bool violation;
+} AliasScope;
+
+/* The base symbol of an lvalue argument, or NULL if it is not a plain lvalue. */
+static const char *
+_lvalueSymbol(Expr *expr) {
+	if (expr == NULL) {
+		return NULL;
+	}
+	if (expr->kind == EXPR_IDENTIFIER) {
+		return expr->name;
+	}
+	if (expr->kind == EXPR_ARRAY_ACCESS && expr->arrayAccess.array->kind == EXPR_IDENTIFIER) {
+		return expr->arrayAccess.array->name;
+	}
+	return NULL;
+}
+
+static void
+_checkAliasingCall(Expr *expr, void *context) {
+	AliasScope *scope = context;
+	if (expr->kind != EXPR_CALL) {
+		return;
+	}
+	Decl *function = _findFunction(scope->program, expr->call.name);
+	if (function == NULL) {
+		return;
+	}
+	int count = 0;
+	for (ExprList *arg = expr->call.args; arg != NULL; arg = arg->next) {
+		++count;
+	}
+	if (count == 0) {
+		return;
+	}
+	const char **symbols = calloc(count, sizeof(char *));
+	bool        *unique = calloc(count, sizeof(bool));
+	int          index = 0;
+	ParamList   *param = function->func.params;
+	for (ExprList *arg = expr->call.args; arg != NULL && param != NULL;
+	     arg = arg->next, param = param->next, ++index) {
+		if (param->param->kind == PARAM_REF) {
+			symbols[index] = _lvalueSymbol(arg->expr);
+			unique[index] = param->param->qualifier == QUALIFIER_UNIQUE;
+		}
+	}
+	for (int i = 0; i < count; ++i) {
+		for (int j = i + 1; j < count; ++j) {
+			if (symbols[i] != NULL && symbols[j] != NULL && strcmp(symbols[i], symbols[j]) == 0
+			    && (unique[i] || unique[j])) {
+				scope->violation = true;
+			}
+		}
+	}
+	free(symbols);
+	free(unique);
+}
+
+static bool
+_checkAliasing(Program *program) {
+	AliasScope scope = { .program = program, .violation = false };
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		if (_isFunctionDecl(node->decl)) {
+			walkStmtExprs(node->decl->func.body, _checkAliasingCall, &scope);
+		}
+	}
+	return !scope.violation;
+}
+
 bool
 executeSemanticAnalysis(CompilerState *compilerState) {
 	logDebugging(_logger, "Analyzing semantics...");
@@ -923,6 +994,10 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 	}
 	if (!_checkParallelDependencies(program)) {
 		logError(_logger, "A parallel block cannot write the same variable more than once.");
+		return false;
+	}
+	if (!_checkAliasing(program)) {
+		logError(_logger, "A unique reference cannot alias another argument in the same call.");
 		return false;
 	}
 	logDebugging(_logger, "Semantic analysis succeeded.");
