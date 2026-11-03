@@ -48,6 +48,7 @@ Expr *BoolLiteralSemanticAction(int value);
 Expr *IdentifierExprSemanticAction(char *name);
 Expr *BinaryExprSemanticAction(BinaryOp op, Expr *left, Expr *right);
 Expr *UnaryExprSemanticAction(UnaryOp op, Expr *operand);
+Expr *CastExprSemanticAction(TypeKind type, Expr *operand);
 Expr *AssignExprSemanticAction(Expr *target, AssignOp op, Expr *value);
 Expr *ArrayAccessExprSemanticAction(Expr *array, Expr *index);
 Expr *CallExprSemanticAction(char *name, ExprList *args);

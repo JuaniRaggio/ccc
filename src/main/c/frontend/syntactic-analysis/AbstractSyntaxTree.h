@@ -54,6 +54,7 @@ typedef enum ExprKind {
 	EXPR_ARRAY_ACCESS,
 	EXPR_CALL,
 	EXPR_INTRINSIC,
+	EXPR_CAST,
 	EXPR_POST_INC,
 	EXPR_POST_DEC
 } ExprKind;
@@ -115,6 +116,10 @@ struct Expr {
 			IntrinsicKind kind;
 			ExprList *args;
 		} intrinsic;
+		struct {
+			TypeKind type;
+			Expr *operand;
+		} cast;
 		Expr *postOp;
 	};
 };

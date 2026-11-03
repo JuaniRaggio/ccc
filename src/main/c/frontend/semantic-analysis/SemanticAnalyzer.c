@@ -1,5 +1,7 @@
 #include "SemanticAnalyzer.h"
+#include "frontend/semantic-analysis/ConstexprEval.h"
 #include "frontend/syntactic-analysis/AstWalk.h"
+#include "frontend/syntactic-analysis/TypeInfo.h"
 #include <string.h>
 
 static Logger *_logger = NULL;
@@ -502,6 +504,26 @@ _category(TypeKind type) {
 	return CAT_INTEGER;
 }
 
+/*
+ * True if a value of type rhsType (produced by rhs) may be converted to target
+ * without an explicit cast: same category, and for integers either identical
+ * types, a value-preserving widening, or a compile-time constant that fits.
+ */
+static bool
+_conversionAllowed(Expr *rhs, TypeKind rhsType, TypeKind target, Program *program) {
+	if (_category(rhsType) != _category(target)) {
+		return false;
+	}
+	if (_category(target) != CAT_INTEGER || rhsType == target) {
+		return true;
+	}
+	int64_t value;
+	if (evalConstexpr(rhs, program, &value)) {
+		return valueFitsType(value, target);
+	}
+	return typeSigned(rhsType) == typeSigned(target) && typeWidth(target) >= typeWidth(rhsType);
+}
+
 typedef struct {
 	char *name;
 	TypeKind type;
@@ -665,12 +687,15 @@ _inferType(Expr *expr, Scope *scope, Program *program, bool *ok) {
 	case EXPR_ASSIGN: {
 		TypeKind target = _inferType(expr->assign.target, scope, program, ok);
 		TypeKind value = _inferType(expr->assign.value, scope, program, ok);
-		if (_category(target) != _category(value)) {
-			logError(_logger, "Assignment between incompatible types.");
+		if (!_conversionAllowed(expr->assign.value, value, target, program)) {
+			logError(_logger, "Assignment between incompatible types (narrowing requires a cast).");
 			*ok = false;
 		}
 		return target;
 	}
+	case EXPR_CAST:
+		_inferType(expr->cast.operand, scope, program, ok);
+		return expr->cast.type;
 	case EXPR_ARRAY_ACCESS: {
 		TypeKind element = _inferType(expr->arrayAccess.array, scope, program, ok);
 		TypeKind index = _inferType(expr->arrayAccess.index, scope, program, ok);
@@ -697,7 +722,7 @@ _inferType(Expr *expr, Scope *scope, Program *program, bool *ok) {
 		for (ExprList *argNode = expr->call.args; argNode != NULL; argNode = argNode->next) {
 			TypeKind argument = _inferType(argNode->expr, scope, program, ok);
 			if (param != NULL) {
-				if (_category(argument) != _category(param->param->type)) {
+				if (!_conversionAllowed(argNode->expr, argument, param->param->type, program)) {
 					logError(_logger, "Argument type mismatch in call to '%s'.", expr->call.name);
 					*ok = false;
 				}
@@ -757,13 +782,16 @@ _typeCheckStmt(Stmt *stmt, Scope *scope, Program *program, TypeKind returnType, 
 			logError(_logger, "Array size must be an integer.");
 			*ok = false;
 		}
-		if (stmt->localDecl.init != NULL
-		    && _category(_inferType(stmt->localDecl.init, scope, program, ok)) != _category(stmt->localDecl.type)) {
-			logError(_logger, "Initializer type does not match the declared type.");
-			*ok = false;
+		if (stmt->localDecl.init != NULL) {
+			TypeKind initType = _inferType(stmt->localDecl.init, scope, program, ok);
+			if (!_conversionAllowed(stmt->localDecl.init, initType, stmt->localDecl.type, program)) {
+				logError(_logger, "Initializer type does not match the declared type.");
+				*ok = false;
+			}
 		}
 		for (ExprList *initNode = stmt->localDecl.initList; initNode != NULL; initNode = initNode->next) {
-			if (_category(_inferType(initNode->expr, scope, program, ok)) != _category(stmt->localDecl.type)) {
+			TypeKind elementType = _inferType(initNode->expr, scope, program, ok);
+			if (!_conversionAllowed(initNode->expr, elementType, stmt->localDecl.type, program)) {
 				logError(_logger, "Array initializer type does not match the declared type.");
 				*ok = false;
 			}
@@ -799,7 +827,7 @@ _typeCheckStmt(Stmt *stmt, Scope *scope, Program *program, TypeKind returnType, 
 			if (_category(returnType) == CAT_VOID) {
 				logError(_logger, "A void function cannot return a value.");
 				*ok = false;
-			} else if (_category(actual) != _category(returnType)) {
+			} else if (!_conversionAllowed(stmt->returnExpr, actual, returnType, program)) {
 				logError(_logger, "Return type does not match the function signature.");
 				*ok = false;
 			}
@@ -841,17 +869,19 @@ _checkTypes(Program *program) {
 			_typeCheckStmt(decl->func.body, &funcScope, program, decl->func.returnType, &ok);
 			free(funcScope.symbols);
 		} else if (decl->kind == DECL_CONSTEXPR_VAR) {
-			if (decl->constexprVar.init != NULL
-			    && _category(_inferType(decl->constexprVar.init, NULL, program, &ok))
-			           != _category(decl->constexprVar.type)) {
-				logError(_logger, "Constexpr initializer type does not match the declared type.");
-				ok = false;
+			if (decl->constexprVar.init != NULL) {
+				TypeKind initType = _inferType(decl->constexprVar.init, NULL, program, &ok);
+				if (!_conversionAllowed(decl->constexprVar.init, initType, decl->constexprVar.type, program)) {
+					logError(_logger, "Constexpr initializer overflows or mismatches the declared type.");
+					ok = false;
+				}
 			}
 		} else if (decl->kind == DECL_CONSTEXPR_ARRAY) {
 			_inferType(decl->constexprArray.size, NULL, program, &ok);
 			for (ExprList *initNode = decl->constexprArray.init; initNode != NULL; initNode = initNode->next) {
-				if (_category(_inferType(initNode->expr, NULL, program, &ok)) != _category(decl->constexprArray.type)) {
-					logError(_logger, "Constexpr array initializer type does not match the declared type.");
+				TypeKind elementType = _inferType(initNode->expr, NULL, program, &ok);
+				if (!_conversionAllowed(initNode->expr, elementType, decl->constexprArray.type, program)) {
+					logError(_logger, "Constexpr array initializer overflows or mismatches the declared type.");
 					ok = false;
 				}
 			}

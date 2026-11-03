@@ -1,6 +1,8 @@
 #include "Generator.h"
 #include "frontend/semantic-analysis/ConstexprEval.h"
 #include "frontend/syntactic-analysis/AstWalk.h"
+#include "frontend/syntactic-analysis/TypeInfo.h"
+#include <inttypes.h>
 #include <string.h>
 
 static Logger *_logger = NULL;
@@ -77,35 +79,13 @@ _emitIdent(const char *name) {
 	}
 }
 
-static int
-_bitWidth(TypeKind type) {
-	switch (type) {
-	case TYPE_INT8:
-	case TYPE_UINT8:
-		return 8;
-	case TYPE_INT16:
-	case TYPE_UINT16:
-		return 16;
-	case TYPE_INT64:
-	case TYPE_UINT64:
-		return 64;
-	default:
-		return 32;
-	}
-}
-
-static bool
-_isSigned(TypeKind type) {
-	return type == TYPE_INT8 || type == TYPE_INT16 || type == TYPE_INT32 || type == TYPE_INT64;
-}
-
 static void
 _emitType(TypeKind type) {
 	if (type == TYPE_BOOL) {
 		fprintf(stdout, "logic");
 		return;
 	}
-	fprintf(stdout, "logic %s[%d:0]", _isSigned(type) ? "signed " : "", _bitWidth(type) - 1);
+	fprintf(stdout, "logic %s[%d:0]", typeSigned(type) ? "signed " : "", typeWidth(type) - 1);
 }
 
 static void _emitExpr(Expr *expr);
@@ -211,6 +191,11 @@ _emitExpr(Expr *expr) {
 		break;
 	case EXPR_INTRINSIC:
 		_emitIntrinsic(expr);
+		break;
+	case EXPR_CAST:
+		fprintf(stdout, "%d'(", typeWidth(expr->cast.type));
+		_emitExpr(expr->cast.operand);
+		fprintf(stdout, ")");
 		break;
 	default:
 		_emitExpr(expr->postOp);
@@ -511,25 +496,11 @@ _emitModule(Decl *function, bool importPackage) {
 	_callCount = 0;
 }
 
-static long
-_maskToType(long value, TypeKind type) {
-	int width = type == TYPE_BOOL ? 1 : _bitWidth(type);
-	if (width >= 64) {
-		return value;
-	}
-	unsigned long mask = (1UL << width) - 1UL;
-	unsigned long bits = (unsigned long)value & mask;
-	if (_isSigned(type) && (bits & (1UL << (width - 1)))) {
-		bits |= ~mask;
-	}
-	return (long)bits;
-}
-
 static void
 _emitConstexprValue(Expr *expr, TypeKind type) {
-	long value;
+	int64_t value;
 	if (evalConstexpr(expr, _program, &value)) {
-		fprintf(stdout, "%ld", _maskToType(value, type));
+		fprintf(stdout, "%" PRId64, maskToType(value, type));
 	} else {
 		_emitExpr(expr);
 	}
@@ -537,9 +508,9 @@ _emitConstexprValue(Expr *expr, TypeKind type) {
 
 static void
 _emitConstexprSize(Expr *expr) {
-	long value;
+	int64_t value;
 	if (evalConstexpr(expr, _program, &value)) {
-		fprintf(stdout, "%ld", value);
+		fprintf(stdout, "%" PRId64, value);
 	} else {
 		_emitExpr(expr);
 	}

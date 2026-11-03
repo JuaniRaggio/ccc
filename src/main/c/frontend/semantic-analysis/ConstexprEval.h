@@ -2,6 +2,7 @@
 
 #include "frontend/syntactic-analysis/AbstractSyntaxTree.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 /*
  * Evaluates a compile-time-constant integer expression (literals, constexpr
@@ -9,4 +10,4 @@
  * and writes the folded value on success; false if the expression is not
  * statically evaluable.
  */
-bool evalConstexpr(Expr *expr, Program *program, long *out);
+bool evalConstexpr(Expr *expr, Program *program, int64_t *out);

@@ -48,6 +48,9 @@ destroyExpr(Expr *expr) {
 	case EXPR_INTRINSIC:
 		destroyExprList(expr->intrinsic.args);
 		break;
+	case EXPR_CAST:
+		destroyExpr(expr->cast.operand);
+		break;
 	case EXPR_POST_INC:
 	case EXPR_POST_DEC:
 		destroyExpr(expr->postOp);

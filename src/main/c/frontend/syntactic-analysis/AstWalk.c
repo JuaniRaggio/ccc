@@ -32,6 +32,9 @@ walkExpr(Expr *expr, ExprVisitor visit, void *context) {
 			walkExpr(argNode->expr, visit, context);
 		}
 		break;
+	case EXPR_CAST:
+		walkExpr(expr->cast.operand, visit, context);
+		break;
 	case EXPR_POST_INC:
 	case EXPR_POST_DEC:
 		walkExpr(expr->postOp, visit, context);

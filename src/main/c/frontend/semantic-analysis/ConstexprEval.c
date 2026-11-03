@@ -1,20 +1,21 @@
 #include "ConstexprEval.h"
+#include "frontend/syntactic-analysis/TypeInfo.h"
 #include <stdlib.h>
 #include <string.h>
 
 #define EVAL_BUDGET (1 << 24)
 
-static long _budget;
+static int64_t _budget;
 
 typedef struct {
 	char **names;
-	long *values;
+	int64_t *values;
 	int count;
 	int capacity;
 } Env;
 
 static void
-_envSet(Env *env, char *name, long value) {
+_envSet(Env *env, char *name, int64_t value) {
 	for (int i = 0; i < env->count; ++i) {
 		if (strcmp(env->names[i], name) == 0) {
 			env->values[i] = value;
@@ -24,7 +25,7 @@ _envSet(Env *env, char *name, long value) {
 	if (env->count == env->capacity) {
 		env->capacity = env->capacity == 0 ? 8 : env->capacity * 2;
 		env->names = realloc(env->names, env->capacity * sizeof(char *));
-		env->values = realloc(env->values, env->capacity * sizeof(long));
+		env->values = realloc(env->values, env->capacity * sizeof(int64_t));
 	}
 	env->names[env->count] = name;
 	env->values[env->count] = value;
@@ -32,7 +33,7 @@ _envSet(Env *env, char *name, long value) {
 }
 
 static bool
-_envGet(Env *env, const char *name, long *out) {
+_envGet(Env *env, const char *name, int64_t *out) {
 	if (env == NULL) {
 		return false;
 	}
@@ -70,13 +71,13 @@ _findDecl(Program *program, const char *name, DeclKind kind) {
 	return NULL;
 }
 
-static long _eval(Expr *expr, Program *program, Env *env, bool *ok);
-static void _exec(Stmt *stmt, Program *program, Env *env, bool *ok, bool *returned, long *retval);
+static int64_t _eval(Expr *expr, Program *program, Env *env, bool *ok);
+static void _exec(Stmt *stmt, Program *program, Env *env, bool *ok, bool *returned, int64_t *retval);
 
-static long
+static int64_t
 _evalBinary(Expr *expr, Program *program, Env *env, bool *ok) {
-	long left = _eval(expr->binary.left, program, env, ok);
-	long right = _eval(expr->binary.right, program, env, ok);
+	int64_t left = _eval(expr->binary.left, program, env, ok);
+	int64_t right = _eval(expr->binary.right, program, env, ok);
 	switch (expr->binary.op) {
 	case BINOP_ADD:
 		return left + right;
@@ -85,13 +86,13 @@ _evalBinary(Expr *expr, Program *program, Env *env, bool *ok) {
 	case BINOP_MUL:
 		return left * right;
 	case BINOP_LSHIFT:
-		if (right < 0 || right >= 64) {
+		if (right < 0 || right >= FOLD_BITS) {
 			*ok = false;
 			return 0;
 		}
 		return left << right;
 	case BINOP_RSHIFT:
-		if (right < 0 || right >= 64) {
+		if (right < 0 || right >= FOLD_BITS) {
 			*ok = false;
 			return 0;
 		}
@@ -115,7 +116,7 @@ _evalBinary(Expr *expr, Program *program, Env *env, bool *ok) {
 	}
 }
 
-static long
+static int64_t
 _evalCall(Expr *expr, Program *program, Env *env, bool *ok) {
 	Decl *function = _findDecl(program, expr->call.name, DECL_CONSTEXPR_FUNC);
 	if (function == NULL) {
@@ -129,16 +130,16 @@ _evalCall(Expr *expr, Program *program, Env *env, bool *ok) {
 		_envSet(&local, param->param->name, _eval(arg->expr, program, env, ok));
 	}
 	bool returned = false;
-	long retval = 0;
+	int64_t retval = 0;
 	_exec(function->func.body, program, &local, ok, &returned, &retval);
 	free(local.names);
 	free(local.values);
 	return retval;
 }
 
-static long
+static int64_t
 _evalArrayAccess(Expr *expr, Program *program, Env *env, bool *ok) {
-	long index = _eval(expr->arrayAccess.index, program, env, ok);
+	int64_t index = _eval(expr->arrayAccess.index, program, env, ok);
 	Decl *array = expr->arrayAccess.array->kind == EXPR_IDENTIFIER
 	                  ? _findDecl(program, expr->arrayAccess.array->name, DECL_CONSTEXPR_ARRAY)
 	                  : NULL;
@@ -146,7 +147,7 @@ _evalArrayAccess(Expr *expr, Program *program, Env *env, bool *ok) {
 		*ok = false;
 		return 0;
 	}
-	long pos = 0;
+	int64_t pos = 0;
 	for (ExprList *element = array->constexprArray.init; element != NULL; element = element->next, ++pos) {
 		if (pos == index) {
 			return _eval(element->expr, program, NULL, ok);
@@ -156,7 +157,7 @@ _evalArrayAccess(Expr *expr, Program *program, Env *env, bool *ok) {
 	return 0;
 }
 
-static long
+static int64_t
 _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 	if (expr == NULL || !*ok) {
 		*ok = false;
@@ -168,7 +169,7 @@ _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 	case EXPR_BOOL_LITERAL:
 		return expr->boolValue ? 1 : 0;
 	case EXPR_IDENTIFIER: {
-		long value;
+		int64_t value;
 		if (_envGet(env, expr->name, &value)) {
 			return value;
 		}
@@ -182,13 +183,13 @@ _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 	case EXPR_BINARY:
 		return _evalBinary(expr, program, env, ok);
 	case EXPR_UNARY: {
-		long operand = _eval(expr->unary.operand, program, env, ok);
+		int64_t operand = _eval(expr->unary.operand, program, env, ok);
 		return expr->unary.op == UNOP_NEG ? -operand : !operand;
 	}
 	case EXPR_ASSIGN: {
-		long value = _eval(expr->assign.value, program, env, ok);
+		int64_t value = _eval(expr->assign.value, program, env, ok);
 		if (expr->assign.target->kind == EXPR_IDENTIFIER) {
-			long current = 0;
+			int64_t current = 0;
 			if (expr->assign.op != ASSIGN_PLAIN) {
 				_envGet(env, expr->assign.target->name, &current);
 			}
@@ -205,6 +206,8 @@ _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 	}
 	case EXPR_ARRAY_ACCESS:
 		return _evalArrayAccess(expr, program, env, ok);
+	case EXPR_CAST:
+		return maskToType(_eval(expr->cast.operand, program, env, ok), expr->cast.type);
 	case EXPR_CALL:
 		return _evalCall(expr, program, env, ok);
 	case EXPR_INTRINSIC: {
@@ -212,7 +215,7 @@ _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 			*ok = false;
 			return 0;
 		}
-		long first = _eval(expr->intrinsic.args->expr, program, env, ok);
+		int64_t first = _eval(expr->intrinsic.args->expr, program, env, ok);
 		if (expr->intrinsic.kind == INTRINSIC_ABS) {
 			return first < 0 ? -first : first;
 		}
@@ -220,7 +223,7 @@ _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 			*ok = false;
 			return 0;
 		}
-		long second = _eval(expr->intrinsic.args->next->expr, program, env, ok);
+		int64_t second = _eval(expr->intrinsic.args->next->expr, program, env, ok);
 		if (expr->intrinsic.kind == INTRINSIC_MIN) {
 			return first < second ? first : second;
 		}
@@ -228,7 +231,7 @@ _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 	}
 	case EXPR_POST_INC:
 	case EXPR_POST_DEC: {
-		long current = 0;
+		int64_t current = 0;
 		_envGet(env, expr->postOp->name, &current);
 		_envSet(env, expr->postOp->name, current + (expr->kind == EXPR_POST_INC ? 1 : -1));
 		return current;
@@ -240,7 +243,7 @@ _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 }
 
 static void
-_exec(Stmt *stmt, Program *program, Env *env, bool *ok, bool *returned, long *retval) {
+_exec(Stmt *stmt, Program *program, Env *env, bool *ok, bool *returned, int64_t *retval) {
 	if (stmt == NULL || *returned || !*ok) {
 		return;
 	}
@@ -304,10 +307,10 @@ _exec(Stmt *stmt, Program *program, Env *env, bool *ok, bool *returned, long *re
 }
 
 bool
-evalConstexpr(Expr *expr, Program *program, long *out) {
+evalConstexpr(Expr *expr, Program *program, int64_t *out) {
 	bool ok = true;
 	_budget = EVAL_BUDGET;
-	long value = _eval(expr, program, NULL, &ok);
+	int64_t value = _eval(expr, program, NULL, &ok);
 	if (ok) {
 		*out = value;
 	}

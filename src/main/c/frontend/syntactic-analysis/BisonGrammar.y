@@ -282,6 +282,8 @@ expr
         { ExprList *a = AppendExprListSemanticAction(SingleExprListSemanticAction($3), $5); $$ = IntrinsicExprSemanticAction(INTRINSIC_MAX, a); }
     | OPEN_PAREN expr CLOSE_PAREN
         { $$ = $2; }
+    | OPEN_PAREN type CLOSE_PAREN expr %prec NEG
+        { $$ = CastExprSemanticAction($2, $4); }
     | expr ADD expr
         { $$ = BinaryExprSemanticAction(BINOP_ADD, $1, $3); }
     | expr SUB expr
