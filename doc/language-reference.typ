@@ -126,10 +126,6 @@ desenrollan. La iteración data-dependiente se reserva para el backend secuencia
 Las referencias (`&`) son parámetros escalares de entrada/salida y no son indexables. Un buffer se
 pasa como parámetro arreglo (`tipo nombre[tamaño]`).
 
-_Pendiente:_ el estrechamiento (@sec-int-cast) aún no se exige en el chequeo de tipos; requiere el
-nodo de cast. Hasta entonces el lint de ancho (Verilator `WIDTH`) se omite en la verificación de
-backend.
-
 = Mapeo a hardware
 
 == Combinacional por defecto

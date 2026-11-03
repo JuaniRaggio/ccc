@@ -85,7 +85,7 @@ Opciones consideradas para la capa de frontend y por qué elegimos la actual:
 
 El límite del black-box (no distingue "aceptado pero con AST incorrecto") lo cubre la capa de backend, que valida la salida con herramientas estándar (Verilator/Icarus) en vez de un verificador propio.
 
-CI (`.github/workflows/pipeline.yaml`) ejecuta _build_ + `test.sh` en cada push o PR. La verificación de Verilog se corre localmente.
+CI (`.github/workflows/pipeline.yaml`) ejecuta _build_ + `test.sh` en cada push o PR. `test.sh` corre ambas capas (el lint de backend se omite si falta Verilator).
 
 ## Roadmap
 
@@ -93,9 +93,6 @@ Las decisiones de diseño ya tomadas están en [`doc/language-reference.typ`](do
 
 | Prioridad | Tarea |
 | :-------- | :---- |
-| Corto     | Nodo de `cast` (`(tipo)expr`) y enforcement de estrechamiento; quita la supresión de `WIDTH` en el lint. |
-| Corto     | Detección de overflow `constexpr` como error de compilación (reusa el evaluador). |
-| Corto     | Integrar `test-backend.sh` a `test.sh`/CI y agregar Verilator a `pipeline.yaml`. |
 | Mediano   | Formalizar aliasing (`unique`/`aliased`): chequeo de call-site y slices solapados. |
 | Largo     | Backend secuencial: FSM (`always_ff`, `clk`/`rst`) con handshake, para iteración data-dependiente (`while`/`for` dinámico). |
 | Largo     | Casts nombrados (`static_cast`/`bit_cast`) en reemplazo de `(tipo)expr`. |
