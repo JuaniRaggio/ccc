@@ -98,7 +98,9 @@ alnum           [a-zA-Z_0-9]
 ";"             { return TokenLexemeAction(SEMICOLON); }
 ","             { return TokenLexemeAction(COMMA); }
 
-{digit}+        { return IntegerLexemeAction(); }
+0[xX][0-9a-fA-F][0-9a-fA-F_]*   { return IntegerLexemeAction(); }
+0[bB][01][01_]*                 { return IntegerLexemeAction(); }
+{digit}({digit}|_)*             { return IntegerLexemeAction(); }
 
 {letter}{alnum}* { return IdentifierLexemeAction(); }
 

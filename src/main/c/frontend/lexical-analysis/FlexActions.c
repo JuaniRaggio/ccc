@@ -1,4 +1,10 @@
 #include "FlexActions.h"
+#include <stdint.h>
+
+#define DECIMAL_BASE 10
+#define HEX_BASE 16
+#define BINARY_BASE 2
+#define HEX_LETTER_OFFSET 10
 
 static bool _logIgnoredLexemes = true;
 static LexicalAnalyzer *_lexicalAnalyzer = NULL;
@@ -105,10 +111,40 @@ IgnoredLexemeAction() {
 	return IN_PROGRESS;
 }
 
+/* Parses a decimal, hexadecimal (0x) or binary (0b) literal, ignoring '_' separators. */
+static int64_t
+_parseInteger(const char *lexeme) {
+	int base = DECIMAL_BASE;
+	if (lexeme[0] == '0' && (lexeme[1] == 'x' || lexeme[1] == 'X')) {
+		base = HEX_BASE;
+		lexeme += 2;
+	} else if (lexeme[0] == '0' && (lexeme[1] == 'b' || lexeme[1] == 'B')) {
+		base = BINARY_BASE;
+		lexeme += 2;
+	}
+	int64_t value = 0;
+	for (; *lexeme != '\0'; ++lexeme) {
+		char character = *lexeme;
+		if (character == '_') {
+			continue;
+		}
+		int digit;
+		if (character >= '0' && character <= '9') {
+			digit = character - '0';
+		} else if (character >= 'a' && character <= 'f') {
+			digit = character - 'a' + HEX_LETTER_OFFSET;
+		} else {
+			digit = character - 'A' + HEX_LETTER_OFFSET;
+		}
+		value = value * base + digit;
+	}
+	return value;
+}
+
 CompilationStatus
 IntegerLexemeAction() {
 	Token *token = createToken(_lexicalAnalyzer, INTEGER);
-	token->semanticValue->integer = atoi(token->lexeme);
+	token->semanticValue->integer = _parseInteger(token->lexeme);
 	_logTokenAction(__FUNCTION__, token);
 	CompilationStatus status = pushToken(_lexicalAnalyzer, token);
 	destroyToken(token);

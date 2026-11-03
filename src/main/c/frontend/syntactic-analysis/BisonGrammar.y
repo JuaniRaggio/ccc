@@ -1,6 +1,7 @@
 %code requires {
 #include "support/type/TokenLabel.h"
 #include "AbstractSyntaxTree.h"
+#include <stdint.h>
 }
 
 %{
@@ -21,7 +22,7 @@ void yyerror(const YYLTYPE *location, const char *message) {
 %expect 1
 
 %union {
-    signed int     integer;
+    int64_t        integer;
     char          *strValue;
     TokenLabel     token;
 

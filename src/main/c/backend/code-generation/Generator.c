@@ -161,7 +161,7 @@ _emitExpr(Expr *expr) {
 	}
 	switch (expr->kind) {
 	case EXPR_INT_LITERAL:
-		fprintf(stdout, "%d", expr->intValue);
+		fprintf(stdout, "%" PRId64, expr->intValue);
 		break;
 	case EXPR_BOOL_LITERAL:
 		fprintf(stdout, "1'b%d", expr->boolValue ? 1 : 0);

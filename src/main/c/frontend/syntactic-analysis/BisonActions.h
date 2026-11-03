@@ -43,7 +43,7 @@ Stmt *ParallelBlockSemanticAction(StmtList *stmts);
 StmtList *EmptyStmtListSemanticAction(void);
 StmtList *AppendStmtSemanticAction(StmtList *list, Stmt *stmt);
 
-Expr *IntLiteralSemanticAction(int value);
+Expr *IntLiteralSemanticAction(int64_t value);
 Expr *BoolLiteralSemanticAction(int value);
 Expr *IdentifierExprSemanticAction(char *name);
 Expr *BinaryExprSemanticAction(BinaryOp op, Expr *left, Expr *right);

@@ -305,7 +305,7 @@ _expr(ExprKind kind) {
 }
 
 Expr *
-IntLiteralSemanticAction(int value) {
+IntLiteralSemanticAction(int64_t value) {
 	_logSyntacticAnalyzerAction(__FUNCTION__);
 	Expr *expr = _expr(EXPR_INT_LITERAL);
 	expr->intValue = value;

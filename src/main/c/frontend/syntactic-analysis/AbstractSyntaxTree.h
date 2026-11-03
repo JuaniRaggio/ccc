@@ -3,6 +3,7 @@
 #include "support/logging/Logger.h"
 #include "support/type/ModuleDestructor.h"
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 ModuleDestructor initializeAbstractSyntaxTreeModule();
@@ -87,7 +88,7 @@ typedef struct Program Program;
 struct Expr {
 	ExprKind kind;
 	union {
-		int intValue;
+		int64_t intValue;
 		int boolValue;
 		char *name;
 		struct {
