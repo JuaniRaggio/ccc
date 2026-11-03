@@ -32,6 +32,24 @@ Referencia normativa: fija qué garantiza cada construcción. El _porqué_ de la
 en el documento de diseño (`1er-entrega.typ`). Se formaliza por áreas; la primera es la
 semántica de enteros.
 
+#table(
+  columns: (auto, 1fr),
+  fill: (_, row) => if row == 0 { luma(220) } else { white },
+  [*Decisión*], [*Elección*],
+  [Overflow], [Error si es estáticamente detectable; envuelve (complemento a dos) en runtime.],
+  [Ancho de operación], [Tipo común (estilo C), sin promoción a un ancho base.],
+  [Conversiones], [Ensanchar implícito; estrechar o cambiar signedness requiere cast.],
+  [Casts], [`(tipo)expr` hoy; `static_cast`/`bit_cast` a futuro; sin `dynamic_cast`.],
+  [Bucles], [`for` y `while` con límite/condición constante en compilación; se desenrollan.],
+  [Referencias], [Escalares, no indexables; los buffers son parámetros arreglo.],
+  [`__parallel`], [Sentencias independientes (sin dependencias RAW/WAW/WAR).],
+  [Llamadas], [Instanciación de módulo.],
+  [`constexpr`], [Evaluado en compilación; vars/arreglos a `localparam`; funciones sin hardware.],
+  [Recursión], [Prohibida (directa y mutua).],
+  [División / módulo], [Fuera del lenguaje.],
+  [Hardware], [Combinacional por defecto; secuencial (FSM) a futuro.],
+)
+
 = Semántica de enteros
 
 == Tipos

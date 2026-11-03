@@ -9,6 +9,7 @@ Compilador de un lenguaje derivado de C a SystemVerilog sintetizable (HLS), desa
 * [Estado](#estado)
 * [Pasos del compilador](#pasos-del-compilador)
 * [Estrategia de pruebas](#estrategia-de-pruebas)
+* [Roadmap](#roadmap)
 * [SystemVerilog](#systemverilog)
 * [Requirements](#requirements)
 * [Configuration](#configuration)
@@ -40,13 +41,32 @@ Pendiente para el Stage III: tabla de símbolos y chequeo de tipos (uso de nombr
 
 El compilador procesa un programa en cuatro fases. Las tres primeras forman el **frontend** (validan el lenguaje de entrada); la cuarta es el **backend** (genera el lenguaje de salida).
 
+```mermaid
+flowchart LR
+    src([Programa fuente]) --> lex[Léxico<br/>Flex]
+    lex -->|tokens| par[Sintáctico<br/>Bison → AST]
+    par -->|no deriva| rej([Rechazo])
+    par -->|AST| sem[Semántico<br/>reglas del lenguaje]
+    sem -->|viola regla| rej
+    sem -->|AST válido| gen[Generación<br/>SystemVerilog]
+    gen --> out([Módulo .sv])
+    subgraph Frontend
+        lex
+        par
+        sem
+    end
+    subgraph Backend
+        gen
+    end
+```
+
 1. **Análisis léxico** (`frontend/lexical-analysis/FlexPatterns.l`). Convierte el texto fuente en una secuencia de tokens. Las palabras clave y los operadores son tokens dedicados; cualquier otro nombre es un único token `IDENTIFIER` que lleva su lexema como valor semántico; comentarios y espacios se descartan.
 
 2. **Análisis sintáctico** (`frontend/syntactic-analysis/BisonGrammar.y`). Un parser LALR(1) _push_ consume los tokens y, mediante las acciones semánticas (`BisonActions.c`), construye el AST (`AbstractSyntaxTree.h`). Si la secuencia no deriva de la gramática, se rechaza.
 
 3. **Análisis semántico** (`frontend/semantic-analysis/SemanticAnalyzer.c`). Una pasada sobre el AST ya completo que valida las reglas estáticas del lenguaje (ver tabla en [Estado](#estado)) y acepta o rechaza. Corre después del parser porque necesita el árbol entero: así puede razonar sobre todo el programa a la vez (por ejemplo, recursión mutua entre funciones declaradas en cualquier orden, imposible de detectar durante el parseo).
 
-4. **Generación de código** (`backend/code-generation/Generator.c`). Recorre el AST ya validado y emite SystemVerilog sintetizable. _Pendiente (Stage III)._
+4. **Generación de código** (`backend/code-generation/Generator.c`). Recorre el AST ya validado y emite SystemVerilog combinacional sintetizable: módulos, puertos, `always_comb`, `__parallel`, `constexpr` como `localparam`, llamadas como instanciación.
 
 ## Estrategia de pruebas
 
@@ -66,6 +86,19 @@ Opciones consideradas para la capa de frontend y por qué elegimos la actual:
 El límite del black-box (no distingue "aceptado pero con AST incorrecto") lo cubre la capa de backend, que valida la salida con herramientas estándar (Verilator/Icarus) en vez de un verificador propio.
 
 CI (`.github/workflows/pipeline.yaml`) ejecuta _build_ + `test.sh` en cada push o PR. La verificación de Verilog se corre localmente.
+
+## Roadmap
+
+Las decisiones de diseño ya tomadas están en [`doc/language-reference.typ`](doc/language-reference.typ). Lo que queda:
+
+| Prioridad | Tarea |
+| :-------- | :---- |
+| Corto     | Nodo de `cast` (`(tipo)expr`) y enforcement de estrechamiento; quita la supresión de `WIDTH` en el lint. |
+| Corto     | Detección de overflow `constexpr` como error de compilación (reusa el evaluador). |
+| Corto     | Integrar `test-backend.sh` a `test.sh`/CI y agregar Verilator a `pipeline.yaml`. |
+| Mediano   | Formalizar aliasing (`unique`/`aliased`): chequeo de call-site y slices solapados. |
+| Largo     | Backend secuencial: FSM (`always_ff`, `clk`/`rst`) con handshake, para iteración data-dependiente (`while`/`for` dinámico). |
+| Largo     | Casts nombrados (`static_cast`/`bit_cast`) en reemplazo de `(tipo)expr`. |
 
 ## SystemVerilog
 
