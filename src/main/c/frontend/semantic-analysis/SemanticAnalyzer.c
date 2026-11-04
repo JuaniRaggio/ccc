@@ -557,9 +557,14 @@ _inferType(Expr *expr, Scope *scope, Program *program, bool *ok) {
 		}
 		return target;
 	}
-	case EXPR_CAST:
-		_inferType(expr->cast.operand, scope, program, ok);
+	case EXPR_CAST: {
+		TypeKind operandType = _inferType(expr->cast.operand, scope, program, ok);
+		if (expr->cast.castKind == CAST_REINTERPRET && typeWidth(operandType) != typeWidth(expr->cast.type)) {
+			logError(_logger, "bit_cast requires operand and target of the same width.");
+			*ok = false;
+		}
 		return expr->cast.type;
+	}
 	case EXPR_ARRAY_ACCESS: {
 		TypeKind element = _inferType(expr->arrayAccess.array, scope, program, ok);
 		TypeKind index = _inferType(expr->arrayAccess.index, scope, program, ok);

@@ -194,9 +194,13 @@ _emitExpr(Expr *expr) {
 		_emitIntrinsic(expr);
 		break;
 	case EXPR_CAST:
-		/* W'(x) truncates/zero-extends; signed'(...) reinterprets as signed so it
-		 * sign-extends in wider contexts, matching maskToType. */
-		if (typeSigned(expr->cast.type)) {
+		if (expr->cast.castKind == CAST_REINTERPRET) {
+			/* bit_cast: same width, reinterpret signedness only. */
+			fprintf(stdout, typeSigned(expr->cast.type) ? "signed'(" : "unsigned'(");
+			_emitExpr(expr->cast.operand);
+			fprintf(stdout, ")");
+		} else if (typeSigned(expr->cast.type)) {
+			/* static_cast to signed: W'(x) truncates/zero-extends, signed'(...) sign-extends. */
 			fprintf(stdout, "signed'(%d'(", typeWidth(expr->cast.type));
 			_emitExpr(expr->cast.operand);
 			fprintf(stdout, "))");

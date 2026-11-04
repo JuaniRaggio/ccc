@@ -348,9 +348,10 @@ UnaryExprSemanticAction(UnaryOp op, Expr *operand) {
 }
 
 Expr *
-CastExprSemanticAction(TypeKind type, Expr *operand) {
+CastExprSemanticAction(CastKind castKind, TypeKind type, Expr *operand) {
 	_logSyntacticAnalyzerAction(__FUNCTION__);
 	Expr *expr = _expr(EXPR_CAST);
+	expr->cast.castKind = castKind;
 	expr->cast.type = type;
 	expr->cast.operand = operand;
 	return expr;

@@ -45,6 +45,9 @@ typedef enum AssignOp { ASSIGN_PLAIN, ASSIGN_ADD, ASSIGN_SUB, ASSIGN_MUL } Assig
 
 typedef enum IntrinsicKind { INTRINSIC_ABS, INTRINSIC_MIN, INTRINSIC_MAX } IntrinsicKind;
 
+/* CAST_VALUE: static_cast (value conversion). CAST_REINTERPRET: bit_cast (same-width bit reinterpretation). */
+typedef enum CastKind { CAST_VALUE, CAST_REINTERPRET } CastKind;
+
 typedef enum ExprKind {
 	EXPR_INT_LITERAL,
 	EXPR_BOOL_LITERAL,
@@ -118,6 +121,7 @@ struct Expr {
 			ExprList *args;
 		} intrinsic;
 		struct {
+			CastKind castKind;
 			TypeKind type;
 			Expr *operand;
 		} cast;

@@ -59,6 +59,8 @@ alnum           [a-zA-Z_0-9]
 "return"        { return TokenLexemeAction(KW_RETURN); }
 "unique"        { return TokenLexemeAction(KW_UNIQUE); }
 "aliased"       { return TokenLexemeAction(KW_ALIASED); }
+"static_cast"   { return TokenLexemeAction(KW_STATIC_CAST); }
+"bit_cast"      { return TokenLexemeAction(KW_BIT_CAST); }
 "__parallel"    { return TokenLexemeAction(KW_PARALLEL); }
 "__abs"         { return TokenLexemeAction(KW_ABS); }
 "__min"         { return TokenLexemeAction(KW_MIN); }

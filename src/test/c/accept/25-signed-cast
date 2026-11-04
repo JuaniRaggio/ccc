@@ -1,3 +1,3 @@
 int8_t recortar(int32_t x) {
-    return (int8_t)x;
+    return static_cast<int8_t>(x);
 }
