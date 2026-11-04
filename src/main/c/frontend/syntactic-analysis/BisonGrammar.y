@@ -60,6 +60,7 @@ void yyerror(const YYLTYPE *location, const char *message) {
 %token <token> KW_CONSTEXPR
 %token <token> KW_IF KW_ELSE KW_FOR KW_WHILE KW_RETURN
 %token <token> KW_UNIQUE KW_ALIASED
+%token <token> KW_STATIC_CAST KW_BIT_CAST
 %token <token> KW_PARALLEL
 %token <token> KW_ABS KW_MIN KW_MAX
 %token <token> KW_TRUE KW_FALSE
@@ -283,8 +284,10 @@ expr
         { ExprList *a = AppendExprListSemanticAction(SingleExprListSemanticAction($3), $5); $$ = IntrinsicExprSemanticAction(INTRINSIC_MAX, a); }
     | OPEN_PAREN expr CLOSE_PAREN
         { $$ = $2; }
-    | OPEN_PAREN type CLOSE_PAREN expr %prec NEG
-        { $$ = CastExprSemanticAction($2, $4); }
+    | KW_STATIC_CAST LT type GT OPEN_PAREN expr CLOSE_PAREN
+        { $$ = CastExprSemanticAction(CAST_VALUE, $3, $6); }
+    | KW_BIT_CAST LT type GT OPEN_PAREN expr CLOSE_PAREN
+        { $$ = CastExprSemanticAction(CAST_REINTERPRET, $3, $6); }
     | expr ADD expr
         { $$ = BinaryExprSemanticAction(BINOP_ADD, $1, $3); }
     | expr SUB expr

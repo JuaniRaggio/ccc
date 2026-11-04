@@ -1,0 +1,3 @@
+uint8_t reducir(int32_t x) {
+    return bit_cast<uint8_t>(x);
+}
