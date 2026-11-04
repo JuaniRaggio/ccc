@@ -928,11 +928,10 @@ _checkAliasingCall(Expr *expr, void *context) {
 		return;
 	}
 	const char **symbols = calloc(count, sizeof(char *));
-	bool        *unique = calloc(count, sizeof(bool));
-	int          index = 0;
-	ParamList   *param = function->func.params;
-	for (ExprList *arg = expr->call.args; arg != NULL && param != NULL;
-	     arg = arg->next, param = param->next, ++index) {
+	bool *unique = calloc(count, sizeof(bool));
+	int index = 0;
+	ParamList *param = function->func.params;
+	for (ExprList *arg = expr->call.args; arg != NULL && param != NULL; arg = arg->next, param = param->next, ++index) {
 		if (param->param->kind == PARAM_REF) {
 			symbols[index] = _lvalueSymbol(arg->expr);
 			unique[index] = param->param->qualifier == QUALIFIER_UNIQUE;
