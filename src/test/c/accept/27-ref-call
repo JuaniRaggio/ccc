@@ -1,0 +1,9 @@
+void doble(int32_t &dst, int32_t x) {
+    dst = x * 2;
+}
+
+int32_t usar(int32_t v) {
+    int32_t r;
+    doble(r, v);
+    return r;
+}
