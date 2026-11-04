@@ -34,6 +34,7 @@ El análisis semántico recorre el AST completo y rechaza el programa si no se c
 | El límite de un `for` o `while` es constante en tiempo de compilación. | Literal, `constexpr` global, o parámetro dentro de una `constexpr`. |
 | Solo se indexan arreglos, no escalares ni referencias.     | Flag `isArray` en la tabla de símbolos (las referencias son escalares). |
 | Dentro de `__parallel` no hay dependencias de datos (RAW/WAW/WAR). | Conjuntos de lectura/escritura por sentencia.                  |
+| Una referencia `unique` no aliasa otro argumento en la misma llamada. | Comparación de símbolos de argumentos en el call-site.     |
 
 Pendiente para el Stage III: tabla de símbolos y chequeo de tipos (uso de nombres no declarados, compatibilidad de tipos), y la generación de código.
 

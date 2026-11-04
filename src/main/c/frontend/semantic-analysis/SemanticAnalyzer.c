@@ -895,7 +895,12 @@ typedef struct {
 	bool violation;
 } AliasScope;
 
-/* The base symbol of an lvalue argument, or NULL if it is not a plain lvalue. */
+/*
+ * The base symbol of an lvalue argument, or NULL if it is not a plain lvalue.
+ * Array elements collapse to their base (a[i] and a[j] share the symbol a), so
+ * aliasing on an array is flagged conservatively: distinct indices are not
+ * proven disjoint without index analysis.
+ */
 static const char *
 _lvalueSymbol(Expr *expr) {
 	if (expr == NULL) {
@@ -927,8 +932,8 @@ _checkAliasingCall(Expr *expr, void *context) {
 	if (count == 0) {
 		return;
 	}
-	const char **symbols = calloc(count, sizeof(char *));
-	bool *unique = calloc(count, sizeof(bool));
+	const char **symbols = calloc(count, sizeof(*symbols));
+	bool *unique = calloc(count, sizeof(*unique));
 	int index = 0;
 	ParamList *param = function->func.params;
 	for (ExprList *arg = expr->call.args; arg != NULL && param != NULL; arg = arg->next, param = param->next, ++index) {
@@ -941,6 +946,8 @@ _checkAliasingCall(Expr *expr, void *context) {
 		for (int j = i + 1; j < count; ++j) {
 			if (symbols[i] != NULL && symbols[j] != NULL && strcmp(symbols[i], symbols[j]) == 0
 			    && (unique[i] || unique[j])) {
+				logError(_logger, "Argument '%s' aliases a unique reference in call to '%s'.", symbols[i],
+				         expr->call.name);
 				scope->violation = true;
 			}
 		}
