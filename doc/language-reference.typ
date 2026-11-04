@@ -39,7 +39,7 @@ semántica de enteros.
   [Overflow], [Error si es estáticamente detectable; envuelve (complemento a dos) en runtime.],
   [Ancho de operación], [Tipo común (estilo C), sin promoción a un ancho base.],
   [Conversiones], [Ensanchar implícito; estrechar o cambiar signedness requiere cast.],
-  [Casts], [`(tipo)expr` hoy; `static_cast`/`bit_cast` a futuro; sin `dynamic_cast`.],
+  [Casts], [`static_cast<T>` (valor) y `bit_cast<T>` (bits, mismo ancho); sin `dynamic_cast`.],
   [Bucles], [`for` y `while` con límite/condición constante en compilación; se desenrollan.],
   [Referencias], [Escalares, no indexables; los buffers son parámetros arreglo.],
   [`__parallel`], [Sentencias independientes (sin dependencias RAW/WAW/WAR).],
@@ -73,17 +73,18 @@ en una operación— requiere cast explícito (@sec-int-cast).
 
 == Casts <sec-int-cast>
 
-Sintaxis `(tipo)expresión`:
+Dos casts nombrados, ambos siempre definidos (nunca error de overflow):
+
+`static_cast<T>(expr)` convierte el valor:
 
 - Estrechar: conserva los bits bajos (truncamiento).
 - Ensanchar: extensión de signo (con signo) o de ceros (sin signo).
 - Mismo ancho, otra signedness: reinterpreta el patrón de bits.
 
-Un cast siempre está definido; nunca es un error de overflow.
+`bit_cast<T>(expr)` reinterpreta el patrón de bits sin conversión; exige que `T` y el operando
+tengan el mismo ancho (si no, error semántico).
 
-_Futuro:_ migrar a casts nombrados (`static_cast<T>` para conversión de valor, `bit_cast<T>`
-para reinterpretar bits). `dynamic_cast` no aplica: requiere RTTI y polimorfismo, inexistentes en
-hardware.
+`dynamic_cast` no aplica: requiere RTTI y polimorfismo, inexistentes en hardware.
 
 == Ancho del resultado <sec-int-width>
 
