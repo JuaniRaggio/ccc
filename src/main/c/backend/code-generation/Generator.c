@@ -1,5 +1,6 @@
 #include "Generator.h"
 #include "frontend/semantic-analysis/ConstexprEval.h"
+#include "frontend/syntactic-analysis/AccessSets.h"
 #include "frontend/syntactic-analysis/AstWalk.h"
 #include "frontend/syntactic-analysis/TypeInfo.h"
 #include <inttypes.h>
@@ -49,19 +50,19 @@ static bool
 _isReservedSV(const char *name) {
 	static const char *keywords[]
 	    = { "buf",       "wire",     "reg",       "and",       "or",         "not",        "nand",     "nor",
-		    "xor",       "xnor",     "logic",     "bit",       "byte",       "time",       "real",     "event",
-		    "table",     "input",    "output",    "inout",     "module",     "endmodule",  "begin",    "end",
-		    "always",    "assign",   "initial",   "parameter", "localparam", "genvar",     "signed",   "unsigned",
-		    "tri",       "supply0",  "supply1",   "posedge",   "negedge",    "edge",       "disable",  "force",
-		    "release",   "fork",     "join",      "task",      "function",   "casex",      "casez",    "specify",
-		    "primitive", "cell",     "config",    "wait",      "automatic",  "final",      "int",      "integer",
-		    "longint",   "shortint", "shortreal", "realtime",  "string",     "type",       "typedef",  "const",
-		    "static",    "class",    "interface", "package",   "endpackage", "program",    "struct",   "union",
-		    "enum",      "var",      "ref",       "virtual",   "extends",    "super",      "this",     "null",
-		    "new",       "local",    "protected", "rand",      "randc",      "constraint", "generate", "endgenerate",
-		    "forever",   "repeat",   "foreach",   "do",        "break",      "continue",   "assert",   "assume",
-		    "cover",     "bind",     "import",    "export",    "extern",     "wand",       "wor",      "chandle",
-		    "modport",   "clocking", "property",  "sequence",  "case",       "endcase",    "default",  NULL };
+	        "xor",       "xnor",     "logic",     "bit",       "byte",       "time",       "real",     "event",
+	        "table",     "input",    "output",    "inout",     "module",     "endmodule",  "begin",    "end",
+	        "always",    "assign",   "initial",   "parameter", "localparam", "genvar",     "signed",   "unsigned",
+	        "tri",       "supply0",  "supply1",   "posedge",   "negedge",    "edge",       "disable",  "force",
+	        "release",   "fork",     "join",      "task",      "function",   "casex",      "casez",    "specify",
+	        "primitive", "cell",     "config",    "wait",      "automatic",  "final",      "int",      "integer",
+	        "longint",   "shortint", "shortreal", "realtime",  "string",     "type",       "typedef",  "const",
+	        "static",    "class",    "interface", "package",   "endpackage", "program",    "struct",   "union",
+	        "enum",      "var",      "ref",       "virtual",   "extends",    "super",      "this",     "null",
+	        "new",       "local",    "protected", "rand",      "randc",      "constraint", "generate", "endgenerate",
+	        "forever",   "repeat",   "foreach",   "do",        "break",      "continue",   "assert",   "assume",
+	        "cover",     "bind",     "import",    "export",    "extern",     "wand",       "wor",      "chandle",
+	        "modport",   "clocking", "property",  "sequence",  "case",       "endcase",    "default",  NULL };
 	for (int i = 0; keywords[i] != NULL; ++i) {
 		if (strcmp(keywords[i], name) == 0) {
 			return true;
@@ -276,6 +277,10 @@ _emitStmt(Stmt *stmt, int indent) {
 	}
 	switch (stmt->kind) {
 	case STMT_EXPR:
+		/* A bare call is realized by its module instantiation, not a procedural statement. */
+		if (stmt->exprStmt != NULL && stmt->exprStmt->kind == EXPR_CALL) {
+			break;
+		}
 		_emitIndent(indent);
 		_emitStep(stmt->exprStmt);
 		fprintf(stdout, ";\n");
@@ -376,19 +381,46 @@ _emitLocalDecl(Stmt *stmt, void *context) {
 	fprintf(stdout, ";\n");
 }
 
+/* A bare call (realized by its instantiation) and a parallel block are not procedural statements. */
+static bool
+_isProceduralStatement(Stmt *stmt) {
+	if (stmt->kind == STMT_PARALLEL) {
+		return false;
+	}
+	if (stmt->kind == STMT_EXPR && stmt->exprStmt != NULL && stmt->exprStmt->kind == EXPR_CALL) {
+		return false;
+	}
+	return true;
+}
+
 static bool
 _bodyHasPlainStatement(Stmt *body) {
 	for (StmtList *stmtNode = body->compound; stmtNode != NULL; stmtNode = stmtNode->next) {
-		if (stmtNode->stmt->kind != STMT_PARALLEL) {
+		if (_isProceduralStatement(stmtNode->stmt)) {
 			return true;
 		}
 	}
 	return false;
 }
 
+/* A reference read-only maps to an input, write-only to an output, both to inout. */
+static const char *
+_refDirection(Stmt *body, const char *name) {
+	NameSet reads = { 0 };
+	NameSet writes = { 0 };
+	collectStmtAccesses(body, &reads, &writes);
+	bool read = nameSetContains(&reads, name);
+	bool written = nameSetContains(&writes, name);
+	nameSetFree(&reads);
+	nameSetFree(&writes);
+	if (read && written) {
+		return "inout ";
+	}
+	return written ? "output" : "input ";
+}
+
 static void
-_emitPort(Param *param, bool last) {
-	const char *direction = param->kind == PARAM_REF ? "output" : "input ";
+_emitPort(Param *param, const char *direction, bool last) {
 	fprintf(stdout, "  %s ", direction);
 	_emitType(param->type);
 	fprintf(stdout, " ");
@@ -427,27 +459,35 @@ static void
 _emitInstances(CallList *calls) {
 	for (int i = 0; i < calls->count; ++i) {
 		Decl *callee = _findFunctionDecl(calls->items[i]->call.name);
-		TypeKind returnType = callee != NULL ? callee->func.returnType : TYPE_INT32;
+		if (callee == NULL || callee->func.returnType == TYPE_VOID) {
+			continue;
+		}
 		fprintf(stdout, "  ");
-		_emitType(returnType);
+		_emitType(callee->func.returnType);
 		fprintf(stdout, " __call%d;\n", i);
 	}
 	for (int i = 0; i < calls->count; ++i) {
 		Expr *call = calls->items[i];
 		Decl *callee = _findFunctionDecl(call->call.name);
+		bool hasReturn = callee != NULL && callee->func.returnType != TYPE_VOID;
 		fprintf(stdout, "  ");
 		_emitIdent(call->call.name);
 		fprintf(stdout, " __u%d (", i);
 		ParamList *param = callee != NULL ? callee->func.params : NULL;
+		bool first = true;
 		for (ExprList *argNode = call->call.args; argNode != NULL && param != NULL;
 		     argNode = argNode->next, param = param->next) {
-			fprintf(stdout, ".");
+			fprintf(stdout, first ? "." : ", .");
 			_emitIdent(param->param->name);
 			fprintf(stdout, "(");
 			_emitExpr(argNode->expr);
-			fprintf(stdout, "), ");
+			fprintf(stdout, ")");
+			first = false;
 		}
-		fprintf(stdout, ".out(__call%d));\n", i);
+		if (hasReturn) {
+			fprintf(stdout, first ? ".out(__call%d)" : ", .out(__call%d)", i);
+		}
+		fprintf(stdout, ");\n");
 	}
 }
 
@@ -462,7 +502,10 @@ _emitModule(Decl *function, bool importPackage) {
 
 	bool hasReturn = function->func.returnType != TYPE_VOID;
 	for (ParamList *paramNode = function->func.params; paramNode != NULL; paramNode = paramNode->next) {
-		_emitPort(paramNode->param, !hasReturn && paramNode->next == NULL);
+		const char *direction = paramNode->param->kind == PARAM_REF
+		                            ? _refDirection(function->func.body, paramNode->param->name)
+		                            : "input ";
+		_emitPort(paramNode->param, direction, !hasReturn && paramNode->next == NULL);
 	}
 	if (hasReturn) {
 		fprintf(stdout, "  output ");
