@@ -47,7 +47,7 @@ semántica de enteros.
   [`constexpr`], [Evaluado en compilación; vars/arreglos a `localparam`; funciones sin hardware.],
   [Recursión], [Prohibida (directa y mutua).],
   [División / módulo], [Fuera del lenguaje.],
-  [Hardware], [Combinacional por defecto; secuencial (FSM) a futuro.],
+  [Hardware], [Combinacional por defecto; `__sequential` genera una FSM con handshake.],
 )
 
 = Semántica de enteros
@@ -121,7 +121,8 @@ programa que los use es rechazado.
 
 Los bucles `for` y `while` requieren que su límite/condición sea constante en tiempo de
 compilación (literal, `constexpr` global, o parámetro dentro de una función `constexpr`); se
-desenrollan. La iteración data-dependiente se reserva para el backend secuencial futuro.
+desenrollan. La iteración data-dependiente solo se admite dentro de una función `__sequential`
+(@sec-sequential), que se traduce a una FSM en vez de a lógica combinacional.
 
 Las referencias (`&`) son parámetros escalares de entrada/salida y no son indexables. Un buffer se
 pasa como parámetro arreglo (`tipo nombre[tamaño]`).
@@ -151,9 +152,22 @@ Las variables y arreglos `constexpr` se evalúan en compilación y se emiten com
 _package_ compartido (los arreglos, con sus valores ya resueltos). Las funciones `constexpr` no
 generan hardware.
 
-== Futuro: lógica secuencial
+== Lógica secuencial (`__sequential`) <sec-sequential>
 
-Un modo secuencial (FSM con `always_ff`, puertos `clk`/`rst` y handshake `start`/`done`) permitirá
-reusar hardware por iteración en bucles largos, a cambio de latencia. Será opt-in por anotación; el
-protocolo de handshake (inicialmente `start`/`done` por pulso, migrable a `ready`/`valid`) se
-define al implementarlo.
+Una función anotada con `__sequential` se traduce a una FSM con `always_ff`, puertos `clk`/`rst` y
+handshake `start`/`done`, en vez de lógica combinacional. Reusa hardware por iteración a cambio de
+latencia, y por eso admite bucles con límite data-dependiente.
+
+El cuerpo se interpreta como preámbulo (declaraciones y asignaciones simples) + un bucle +
+epílogo (el `return`). La FSM tiene tres estados:
+
+- `CCC_IDLE`: con `done` en `0`, espera `start`; al llegar inicializa los registros y pasa a
+  `CCC_RUN`.
+- `CCC_RUN`: mientras la condición del bucle se cumple ejecuta una iteración por ciclo; cuando deja
+  de cumplirse registra el resultado en `out` y pasa a `CCC_DONE`.
+- `CCC_DONE`: asigna `done` en `1` por un ciclo y vuelve a `CCC_IDLE`.
+
+Las actualizaciones de registro usan asignación no bloqueante (`<=`): cada iteración lee los
+valores del flanco anterior. Los parámetros por valor son entradas que deben mantenerse estables
+durante la ejecución. Limitaciones actuales: un único bucle no anidado y sin llamadas a función en
+el cuerpo.

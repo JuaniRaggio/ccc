@@ -273,6 +273,10 @@ _checkLoopBounds(Program *program) {
 		if (!_isFunctionDecl(decl)) {
 			continue;
 		}
+		/* A sequential function compiles to an FSM, so data-dependent loop bounds are allowed. */
+		if (decl->kind == DECL_FUNCTION && decl->func.sequential) {
+			continue;
+		}
 		int paramCount = 0;
 		for (ParamList *paramNode = decl->func.params; paramNode != NULL; paramNode = paramNode->next) {
 			++paramCount;

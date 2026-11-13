@@ -60,6 +60,7 @@ alnum           [a-zA-Z_0-9]
 "unique"        { return TokenLexemeAction(KW_UNIQUE); }
 "aliased"       { return TokenLexemeAction(KW_ALIASED); }
 "__parallel"    { return TokenLexemeAction(KW_PARALLEL); }
+"__sequential"  { return TokenLexemeAction(KW_SEQUENTIAL); }
 "__abs"         { return TokenLexemeAction(KW_ABS); }
 "__min"         { return TokenLexemeAction(KW_MIN); }
 "__max"         { return TokenLexemeAction(KW_MAX); }

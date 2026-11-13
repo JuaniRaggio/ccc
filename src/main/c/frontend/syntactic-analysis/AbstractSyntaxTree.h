@@ -188,6 +188,7 @@ struct Decl {
 			char *name;
 			ParamList *params;
 			Stmt *body;
+			bool sequential;
 		} func;
 		struct {
 			TypeKind type;

@@ -19,7 +19,7 @@ Compilador de un lenguaje derivado de C a SystemVerilog sintetizable (HLS), desa
 
 ## Estado
 
-**Frontend completo**: léxico (`FlexPatterns.l`), sintáctico (`BisonGrammar.y` -> AST en `AbstractSyntaxTree.h`) y semántico (`frontend/semantic-analysis/SemanticAnalyzer.c`). El frontend acepta o rechaza el programa según las reglas estáticas del lenguaje. El backend (`backend/code-generation/`) genera SystemVerilog combinacional (módulos, puertos, `always_comb`, `__parallel`, `constexpr` como `localparam`, llamadas como instanciación de módulos).
+**Frontend completo**: léxico (`FlexPatterns.l`), sintáctico (`BisonGrammar.y` -> AST en `AbstractSyntaxTree.h`) y semántico (`frontend/semantic-analysis/SemanticAnalyzer.c`). El frontend acepta o rechaza el programa según las reglas estáticas del lenguaje. El backend (`backend/code-generation/`) genera SystemVerilog: combinacional por defecto (módulos, puertos, `always_comb`, `__parallel`, `constexpr` como `localparam`, llamadas como instanciación de módulos) y una FSM (`always_ff` con handshake `start`/`done`) para funciones `__sequential`.
 
 El único conflicto de la gramática es el _dangling else_ (`%expect 1`), resuelto por Bison asociando el `else` al `if` más cercano.
 
@@ -31,7 +31,7 @@ El análisis semántico recorre el AST completo y rechaza el programa si no se c
 | No hay recursión (directa ni mutua).                       | Grafo de llamadas + detección de ciclos (DFS).                        |
 | Las funciones `constexpr` no toman parámetros por referencia. | Inspección de los parámetros de cada declaración `constexpr`.      |
 | `constexpr` solo invoca `constexpr`, y solo se invoca desde un contexto `constexpr`. | Recorrido de contextos `constexpr` y cuerpos runtime.     |
-| El límite de un `for` o `while` es constante en tiempo de compilación. | Literal, `constexpr` global, o parámetro dentro de una `constexpr`. |
+| El límite de un `for` o `while` es constante en tiempo de compilación, salvo en funciones `__sequential`. | Literal, `constexpr` global, o parámetro dentro de una `constexpr`; las `__sequential` se eximen. |
 | Solo se indexan arreglos, no escalares ni referencias.     | Flag `isArray` en la tabla de símbolos (las referencias son escalares). |
 | Dentro de `__parallel` no hay dependencias de datos (RAW/WAW/WAR). | Conjuntos de lectura/escritura por sentencia.                  |
 | Una referencia `unique` no aliasa otro argumento en la misma llamada. | Comparación de símbolos de argumentos en el call-site.     |
@@ -67,7 +67,7 @@ flowchart LR
 
 3. **Análisis semántico** (`frontend/semantic-analysis/SemanticAnalyzer.c`). Una pasada sobre el AST ya completo que valida las reglas estáticas del lenguaje (ver tabla en [Estado](#estado)) y acepta o rechaza. Corre después del parser porque necesita el árbol entero: así puede razonar sobre todo el programa a la vez (por ejemplo, recursión mutua entre funciones declaradas en cualquier orden, imposible de detectar durante el parseo).
 
-4. **Generación de código** (`backend/code-generation/Generator.c`). Recorre el AST ya validado y emite SystemVerilog combinacional sintetizable: módulos, puertos, `always_comb`, `__parallel`, `constexpr` como `localparam`, llamadas como instanciación.
+4. **Generación de código** (`backend/code-generation/Generator.c`). Recorre el AST ya validado y emite SystemVerilog sintetizable: por defecto combinacional (módulos, puertos, `always_comb`, `__parallel`, `constexpr` como `localparam`, llamadas como instanciación); las funciones `__sequential` se emiten como FSM (`always_ff` con estados `CCC_IDLE`/`CCC_RUN`/`CCC_DONE` y handshake `start`/`done`), una iteración del bucle por ciclo.
 
 ## Estrategia de pruebas
 
@@ -94,9 +94,9 @@ Las decisiones de diseño ya tomadas están en [`doc/language-reference.typ`](do
 
 | Prioridad | Tarea |
 | :-------- | :---- |
-| Mediano   | Formalizar aliasing (`unique`/`aliased`): chequeo de call-site y slices solapados. |
-| Largo     | Backend secuencial: FSM (`always_ff`, `clk`/`rst`) con handshake, para iteración data-dependiente (`while`/`for` dinámico). |
-| Largo     | Casts nombrados (`static_cast`/`bit_cast`) en reemplazo de `(tipo)expr`. |
+| Mediano   | Slices solapados en el chequeo de aliasing (`unique`/`aliased`). |
+| Largo     | FSM secuencial multi-bucle: bucles anidados y llamadas a función dentro de `__sequential`. |
+| Largo     | Handshake `ready`/`valid` como alternativa a `start`/`done`. |
 
 ## SystemVerilog
 
