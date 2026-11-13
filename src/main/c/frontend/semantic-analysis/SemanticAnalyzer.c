@@ -273,6 +273,10 @@ _checkLoopBounds(Program *program) {
 		if (!_isFunctionDecl(decl)) {
 			continue;
 		}
+		/* A sequential function compiles to an FSM, so data-dependent loop bounds are allowed. */
+		if (decl->kind == DECL_FUNCTION && decl->func.sequential) {
+			continue;
+		}
 		int paramCount = 0;
 		for (ParamList *paramNode = decl->func.params; paramNode != NULL; paramNode = paramNode->next) {
 			++paramCount;
@@ -836,6 +840,99 @@ _checkAliasing(Program *program) {
 	return !scope.violation;
 }
 
+/* The sequential (FSM) backend compiles a body shaped as preamble + one top-level
+ * loop + epilogue. It cannot represent nested or multiple loops, calls, parallel
+ * blocks, or a return nested inside control flow, so those are rejected here instead
+ * of being silently dropped by the generator. */
+typedef struct {
+	bool hasCall;
+	bool hasParallel;
+	int loopCount;
+	int returnCount;
+} SeqScan;
+
+static void
+_seqScanExpr(Expr *expr, void *context) {
+	if (expr->kind == EXPR_CALL) {
+		((SeqScan *)context)->hasCall = true;
+	}
+}
+
+static void
+_seqScanStmt(Stmt *stmt, void *context) {
+	SeqScan *scan = context;
+	if (stmt->kind == STMT_FOR || stmt->kind == STMT_WHILE) {
+		++scan->loopCount;
+	} else if (stmt->kind == STMT_PARALLEL) {
+		scan->hasParallel = true;
+	} else if (stmt->kind == STMT_RETURN) {
+		++scan->returnCount;
+	}
+}
+
+static bool
+_sequentialBodyIsRepresentable(Stmt *body) {
+	SeqScan scan = { 0 };
+	walkStmts(body, _seqScanStmt, &scan);
+	walkStmtExprs(body, _seqScanExpr, &scan);
+	if (scan.hasCall || scan.hasParallel || scan.loopCount > 1) {
+		return false;
+	}
+	int topLoops = 0;
+	int topReturns = 0;
+	for (StmtList *node = body->compound; node != NULL; node = node->next) {
+		if (node->stmt->kind == STMT_FOR || node->stmt->kind == STMT_WHILE) {
+			++topLoops;
+		} else if (node->stmt->kind == STMT_RETURN) {
+			++topReturns;
+		}
+	}
+	/* Every loop and return must sit at the top level of the body. */
+	return topLoops == scan.loopCount && topReturns == scan.returnCount;
+}
+
+static bool
+_isSequentialFunction(Program *program, const char *name) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		if (node->decl->kind == DECL_FUNCTION && node->decl->func.sequential
+		    && strcmp(node->decl->func.name, name) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+typedef struct {
+	Program *program;
+	bool violation;
+} SeqCallScope;
+
+static void
+_seqCallCheck(Expr *expr, void *context) {
+	SeqCallScope *scope = context;
+	if (expr->kind == EXPR_CALL && _isSequentialFunction(scope->program, expr->call.name)) {
+		scope->violation = true;
+	}
+}
+
+static bool
+_checkSequential(Program *program) {
+	SeqCallScope callScope = { .program = program, .violation = false };
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (!_isFunctionDecl(decl)) {
+			continue;
+		}
+		/* A sequential module exposes a clk/start/done handshake, not a dataflow port,
+		 * so it cannot be instantiated by the combinational call path. */
+		walkStmtExprs(decl->func.body, _seqCallCheck, &callScope);
+		if (decl->kind == DECL_FUNCTION && decl->func.sequential && !_sequentialBodyIsRepresentable(decl->func.body)) {
+			return false;
+		}
+	}
+	return !callScope.violation;
+}
+
 bool
 executeSemanticAnalysis(CompilerState *compilerState) {
 	logDebugging(_logger, "Analyzing semantics...");
@@ -873,6 +970,12 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 	}
 	if (!_checkAliasing(program)) {
 		logError(_logger, "A unique reference cannot alias another argument in the same call.");
+		return false;
+	}
+	if (!_checkSequential(program)) {
+		logError(_logger,
+		         "A __sequential function admits one top-level loop, no nested loops, calls or parallel blocks, "
+		         "and cannot be called.");
 		return false;
 	}
 	logDebugging(_logger, "Semantic analysis succeeded.");

@@ -495,6 +495,221 @@ _emitInstances(CallList *calls) {
 	}
 }
 
+/* --- Sequential (FSM) backend ---
+ * A __sequential function becomes a clocked module with a start/done handshake.
+ * The body is preamble (simple statements) + one loop + epilogue (return); the loop
+ * runs one iteration per clock. Register updates use nonblocking assignment so an
+ * iteration reads the values latched at the previous edge. */
+
+static void _emitSeqStmt(Stmt *stmt, int indent);
+
+static void
+_emitSeqAssign(Expr *assign, int indent) {
+	_emitIndent(indent);
+	_emitExpr(assign->assign.target);
+	fprintf(stdout, " <= ");
+	const char *op = _compoundOp(assign->assign.op);
+	if (op != NULL) {
+		_emitExpr(assign->assign.target);
+		fprintf(stdout, " %s ", op);
+	}
+	_emitExpr(assign->assign.value);
+	fprintf(stdout, ";\n");
+}
+
+static void
+_emitSeqStep(Expr *expr, int indent) {
+	if (expr == NULL) {
+		return;
+	}
+	if (expr->kind == EXPR_POST_INC || expr->kind == EXPR_POST_DEC) {
+		_emitIndent(indent);
+		_emitExpr(expr->postOp);
+		fprintf(stdout, " <= ");
+		_emitExpr(expr->postOp);
+		fprintf(stdout, " %s 1;\n", expr->kind == EXPR_POST_INC ? "+" : "-");
+	} else if (expr->kind == EXPR_ASSIGN) {
+		_emitSeqAssign(expr, indent);
+	}
+}
+
+static void
+_emitSeqBranch(Stmt *stmt, int indent) {
+	if (stmt != NULL && stmt->kind == STMT_COMPOUND) {
+		for (StmtList *node = stmt->compound; node != NULL; node = node->next) {
+			_emitSeqStmt(node->stmt, indent);
+		}
+	} else {
+		_emitSeqStmt(stmt, indent);
+	}
+}
+
+static void
+_emitSeqStmt(Stmt *stmt, int indent) {
+	if (stmt == NULL) {
+		return;
+	}
+	switch (stmt->kind) {
+	case STMT_EXPR:
+		_emitSeqStep(stmt->exprStmt, indent);
+		break;
+	case STMT_LOCAL_DECL:
+		if (stmt->localDecl.init != NULL) {
+			_emitIndent(indent);
+			_emitIdent(stmt->localDecl.name);
+			fprintf(stdout, " <= ");
+			_emitExpr(stmt->localDecl.init);
+			fprintf(stdout, ";\n");
+		}
+		break;
+	case STMT_IF:
+		_emitIndent(indent);
+		fprintf(stdout, "if (");
+		_emitExpr(stmt->ifStmt.condition);
+		fprintf(stdout, ") begin\n");
+		_emitSeqBranch(stmt->ifStmt.thenBranch, indent + 2);
+		_emitIndent(indent);
+		fprintf(stdout, "end\n");
+		if (stmt->ifStmt.elseBranch != NULL) {
+			_emitIndent(indent);
+			fprintf(stdout, "else begin\n");
+			_emitSeqBranch(stmt->ifStmt.elseBranch, indent + 2);
+			_emitIndent(indent);
+			fprintf(stdout, "end\n");
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+/* Emits a statement, mapping a return to the output register. */
+static void
+_emitSeqOrReturn(Stmt *stmt, int indent) {
+	if (stmt->kind == STMT_RETURN) {
+		if (stmt->returnExpr != NULL) {
+			_emitIndent(indent);
+			fprintf(stdout, "out <= ");
+			_emitExpr(stmt->returnExpr);
+			fprintf(stdout, ";\n");
+		}
+	} else {
+		_emitSeqStmt(stmt, indent);
+	}
+}
+
+static Stmt *
+_findSequentialLoop(Stmt *body) {
+	for (StmtList *node = body->compound; node != NULL; node = node->next) {
+		if (node->stmt->kind == STMT_FOR || node->stmt->kind == STMT_WHILE) {
+			return node->stmt;
+		}
+	}
+	return NULL;
+}
+
+static void
+_emitSequentialModule(Decl *function, bool importPackage) {
+	fprintf(stdout, "module ");
+	_emitIdent(function->func.name);
+	if (importPackage) {
+		fprintf(stdout, " import ccc_pkg::*;");
+	}
+	fprintf(stdout, " (\n");
+	fprintf(stdout, "  input logic clk,\n");
+	fprintf(stdout, "  input logic rst,\n");
+	fprintf(stdout, "  input logic start,\n");
+	fprintf(stdout, "  output logic done,\n");
+
+	bool hasReturn = function->func.returnType != TYPE_VOID;
+	for (ParamList *paramNode = function->func.params; paramNode != NULL; paramNode = paramNode->next) {
+		const char *direction = paramNode->param->kind == PARAM_REF
+		                            ? _refDirection(function->func.body, paramNode->param->name)
+		                            : "input ";
+		_emitPort(paramNode->param, direction, !hasReturn && paramNode->next == NULL);
+	}
+	if (hasReturn) {
+		fprintf(stdout, "  output ");
+		_emitType(function->func.returnType);
+		fprintf(stdout, " out\n");
+	}
+	fprintf(stdout, ");\n");
+
+	fprintf(stdout, "  typedef enum logic [1:0] { CCC_IDLE, CCC_RUN, CCC_DONE } ccc_state_t;\n");
+	fprintf(stdout, "  ccc_state_t ccc_state;\n");
+	walkStmts(function->func.body, _emitLocalDecl, NULL);
+
+	Stmt *loop = _findSequentialLoop(function->func.body);
+	Expr *cond = NULL;
+	Stmt *loopInit = NULL;
+	Expr *loopUpdate = NULL;
+	Stmt *loopBody = NULL;
+	if (loop != NULL && loop->kind == STMT_FOR) {
+		loopInit = loop->forStmt.init;
+		cond = loop->forStmt.condition;
+		loopUpdate = loop->forStmt.update;
+		loopBody = loop->forStmt.body;
+	} else if (loop != NULL) {
+		cond = loop->whileStmt.condition;
+		loopBody = loop->whileStmt.body;
+	}
+
+	fprintf(stdout, "  always_ff @(posedge clk) begin\n");
+	fprintf(stdout, "    if (rst) begin\n");
+	fprintf(stdout, "      ccc_state <= CCC_IDLE;\n");
+	fprintf(stdout, "      done <= 1'b0;\n");
+	fprintf(stdout, "    end else begin\n");
+	fprintf(stdout, "      case (ccc_state)\n");
+
+	fprintf(stdout, "        CCC_IDLE: begin\n");
+	fprintf(stdout, "          done <= 1'b0;\n");
+	fprintf(stdout, "          if (start) begin\n");
+	for (StmtList *node = function->func.body->compound; node != NULL; node = node->next) {
+		if (node->stmt == loop) {
+			break;
+		}
+		_emitSeqOrReturn(node->stmt, 12);
+	}
+	_emitSeqStmt(loopInit, 12);
+	fprintf(stdout, "            ccc_state <= %s;\n", loop != NULL ? "CCC_RUN" : "CCC_DONE");
+	fprintf(stdout, "          end\n");
+	fprintf(stdout, "        end\n");
+
+	if (loop != NULL) {
+		fprintf(stdout, "        CCC_RUN: begin\n");
+		fprintf(stdout, "          if (");
+		_emitExpr(cond);
+		fprintf(stdout, ") begin\n");
+		_emitSeqBranch(loopBody, 12);
+		_emitSeqStep(loopUpdate, 12);
+		fprintf(stdout, "          end else begin\n");
+		bool afterLoop = false;
+		for (StmtList *node = function->func.body->compound; node != NULL; node = node->next) {
+			if (node->stmt == loop) {
+				afterLoop = true;
+				continue;
+			}
+			if (afterLoop) {
+				_emitSeqOrReturn(node->stmt, 12);
+			}
+		}
+		fprintf(stdout, "            ccc_state <= CCC_DONE;\n");
+		fprintf(stdout, "          end\n");
+		fprintf(stdout, "        end\n");
+	}
+
+	fprintf(stdout, "        CCC_DONE: begin\n");
+	fprintf(stdout, "          done <= 1'b1;\n");
+	fprintf(stdout, "          ccc_state <= CCC_IDLE;\n");
+	fprintf(stdout, "        end\n");
+
+	fprintf(stdout, "        default: ccc_state <= CCC_IDLE;\n");
+	fprintf(stdout, "      endcase\n");
+	fprintf(stdout, "    end\n");
+	fprintf(stdout, "  end\n");
+	fprintf(stdout, "endmodule\n");
+}
+
 static void
 _emitModule(Decl *function, bool importPackage) {
 	fprintf(stdout, "module ");
@@ -626,7 +841,11 @@ executeGenerator(CompilerState *compilerState) {
 	bool importPackage = _emitPackage(program);
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
 		if (node->decl->kind == DECL_FUNCTION) {
-			_emitModule(node->decl, importPackage);
+			if (node->decl->func.sequential) {
+				_emitSequentialModule(node->decl, importPackage);
+			} else {
+				_emitModule(node->decl, importPackage);
+			}
 			fprintf(stdout, "\n");
 		}
 	}

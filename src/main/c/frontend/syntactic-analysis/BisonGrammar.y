@@ -62,6 +62,7 @@ void yyerror(const YYLTYPE *location, const char *message) {
 %token <token> KW_UNIQUE KW_ALIASED
 %token <token> KW_STATIC_CAST KW_BIT_CAST
 %token <token> KW_PARALLEL
+%token <token> KW_SEQUENTIAL
 %token <token> KW_ABS KW_MIN KW_MAX
 %token <token> KW_TRUE KW_FALSE
 
@@ -122,7 +123,9 @@ decl
 
 funcDecl
     : type IDENTIFIER OPEN_PAREN paramList CLOSE_PAREN compoundStmt
-        { $$ = FunctionDeclSemanticAction($1, $2, $4, $6); }
+        { $$ = FunctionDeclSemanticAction(false, $1, $2, $4, $6); }
+    | KW_SEQUENTIAL type IDENTIFIER OPEN_PAREN paramList CLOSE_PAREN compoundStmt
+        { $$ = FunctionDeclSemanticAction(true, $2, $3, $5, $7); }
     ;
 
 constexprFuncDecl
