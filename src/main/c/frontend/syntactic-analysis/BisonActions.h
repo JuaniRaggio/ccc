@@ -17,7 +17,7 @@ Program *ProgramSemanticAction(DeclList *decls);
 DeclList *SingleDeclListSemanticAction(Decl *decl);
 DeclList *AppendDeclSemanticAction(DeclList *list, Decl *decl);
 
-Decl *FunctionDeclSemanticAction(TypeKind returnType, char *name, ParamList *params, Stmt *body);
+Decl *FunctionDeclSemanticAction(bool sequential, TypeKind returnType, char *name, ParamList *params, Stmt *body);
 Decl *ConstexprFuncDeclSemanticAction(TypeKind returnType, char *name, ParamList *params, Stmt *body);
 Decl *ConstexprVarDeclSemanticAction(TypeKind type, char *name, Expr *init);
 Decl *ConstexprArrayDeclSemanticAction(TypeKind type, char *name, Expr *size, ExprList *init);

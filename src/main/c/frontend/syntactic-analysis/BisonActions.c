@@ -87,9 +87,11 @@ _functionDecl(DeclKind kind, TypeKind returnType, char *name, ParamList *params,
 }
 
 Decl *
-FunctionDeclSemanticAction(TypeKind returnType, char *name, ParamList *params, Stmt *body) {
+FunctionDeclSemanticAction(bool sequential, TypeKind returnType, char *name, ParamList *params, Stmt *body) {
 	_logSyntacticAnalyzerAction(__FUNCTION__);
-	return _functionDecl(DECL_FUNCTION, returnType, name, params, body);
+	Decl *decl = _functionDecl(DECL_FUNCTION, returnType, name, params, body);
+	decl->func.sequential = sequential;
+	return decl;
 }
 
 Decl *

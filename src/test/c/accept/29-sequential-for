@@ -1,0 +1,7 @@
+__sequential uint32_t factorial(uint32_t n) {
+    uint32_t acc = 1;
+    for (uint32_t i = 1; i <= n; i++) {
+        acc *= i;
+    }
+    return acc;
+}

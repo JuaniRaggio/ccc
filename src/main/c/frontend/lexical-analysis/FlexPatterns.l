@@ -62,6 +62,7 @@ alnum           [a-zA-Z_0-9]
 "static_cast"   { return TokenLexemeAction(KW_STATIC_CAST); }
 "bit_cast"      { return TokenLexemeAction(KW_BIT_CAST); }
 "__parallel"    { return TokenLexemeAction(KW_PARALLEL); }
+"__sequential"  { return TokenLexemeAction(KW_SEQUENTIAL); }
 "__abs"         { return TokenLexemeAction(KW_ABS); }
 "__min"         { return TokenLexemeAction(KW_MIN); }
 "__max"         { return TokenLexemeAction(KW_MAX); }
