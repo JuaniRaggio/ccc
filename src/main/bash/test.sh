@@ -41,6 +41,7 @@ done
 echo ""
 
 bash "$(dirname "$0")/test-backend.sh" || STATUS=1
+bash "$(dirname "$0")/test-sim.sh" || STATUS=1
 
 echo "All done."
 exit $STATUS
