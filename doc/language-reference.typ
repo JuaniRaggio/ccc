@@ -179,3 +179,36 @@ contradiga el orden secuencial del código, se rechaza toda dependencia _read-af
 un ciclo (una sentencia que lee lo que otra anterior del mismo ciclo escribió); hay que separarla en
 iteraciones. Los parámetros por valor son entradas que deben mantenerse estables durante la
 ejecución. Limitaciones actuales: un único bucle no anidado y sin llamadas a función en el cuerpo.
+
+= Trabajo futuro
+
+Dos extensiones planificadas, no implementadas. Ninguna es prerrequisito de lo anterior; se
+documentan para fijar su diseño y las decisiones abiertas.
+
+== FSM secuencial multi-bucle
+
+Hoy una función `__sequential` admite un único bucle de nivel superior, sin anidar y sin llamadas.
+Generalizarlo requiere _scheduling_ HLS real en vez de los tres estados fijos
+(`CCC_IDLE`/`CCC_RUN`/`CCC_DONE`):
+
+- *Bucles anidados*: cada bucle introduce su propio grupo de ciclos y dependencias _loop-carried_
+  que cruzan la frontera interno/externo. El análisis de _hazards_ debe pasar de los tres grupos
+  fijos a un modelo de _dataflow_ por estado.
+- *Llamadas dentro del cuerpo*: la instanciación combinacional actual no sirve; una llamada
+  secuencial necesita encadenar el handshake del _callee_ (su propio `start`/`done`) como una
+  sub-FSM, suspendiendo la FSM llamadora hasta el `done` del _callee_. Además, los globales
+  `_callNodes`/`_callCount` del generador (hoy sólo seteados en el camino combinacional) deben
+  pasarse como parámetro antes de habilitar esto.
+
+== Handshake `ready`/`valid`
+
+Alternativa al par `start`/`done` por pulso, con _backpressure_ para encadenar módulos en un
+_pipeline_. Decisiones abiertas:
+
+- *Protocolo*: `valid` del productor + `ready` del consumidor; la transferencia ocurre en el flanco
+  donde ambos están altos. Definir si `out` se muestrea junto con `valid` (debe mantenerse estable
+  hasta el `ready`, invariante que la FSM actual ya cumple al registrar `out` un ciclo antes de
+  `done`).
+- *Opt-in*: una anotación distinta de `__sequential`, o un modo de ésta.
+- *Prerrequisito*: los puertos de arreglo de salida (ya corregidos) se usan si el productor escribe
+  a un _buffer_ que se consume por streaming.

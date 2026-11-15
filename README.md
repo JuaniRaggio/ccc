@@ -91,12 +91,12 @@ CI (`.github/workflows/pipeline.yaml`) ejecuta _build_ + `test.sh` en cada push 
 
 ## Roadmap
 
-Las decisiones de diseño ya tomadas están en [`doc/language-reference.typ`](doc/language-reference.typ). Lo que queda:
+Las decisiones de diseño ya tomadas están en [`doc/language-reference.typ`](doc/language-reference.typ); los 19 bugs cerrados por las revisiones, en [`doc/correctness-findings.md`](doc/correctness-findings.md). Lo que queda son dos features grandes, con su diseño y decisiones abiertas documentados en la sección _Trabajo futuro_ de la referencia:
 
 | Prioridad | Tarea |
 | :-------- | :---- |
-| Largo     | FSM secuencial multi-bucle: bucles anidados y llamadas a función dentro de `__sequential`. |
-| Largo     | Handshake `ready`/`valid` como alternativa a `start`/`done`. |
+| Largo     | FSM secuencial multi-bucle: bucles anidados y llamadas a función dentro de `__sequential` (requiere scheduling HLS por estado). |
+| Largo     | Handshake `ready`/`valid` con backpressure, alternativa a `start`/`done`. |
 
 ## SystemVerilog
 

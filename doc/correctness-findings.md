@@ -49,4 +49,8 @@ empíricamente antes y después del fix, con un test de rechazo cuando aplica.
 
 ## Pendiente (features, no bugs)
 
-- FSM secuencial multi-bucle (anidados + llamadas); handshake `ready`/`valid`.
+Documentadas con su diseño y decisiones abiertas en la sección _Trabajo futuro_ de
+`doc/language-reference.typ`; no implementadas.
+
+- FSM secuencial multi-bucle (bucles anidados + llamadas dentro de `__sequential`).
+- Handshake `ready`/`valid` con backpressure.
