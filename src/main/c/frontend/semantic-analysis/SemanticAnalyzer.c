@@ -1308,6 +1308,162 @@ _checkSingleDriver(Program *program) {
 	return true;
 }
 
+/* Definite assignment: reading a local before it is assigned on every path infers a latch
+ * (combinational) or yields X. The pass threads the set of definitely-assigned names
+ * through the control flow; a read of a declared local not yet in that set is rejected. */
+static void
+_nameSetCopy(const NameSet *source, NameSet *target) {
+	for (int i = 0; i < source->count; ++i) {
+		nameSetAdd(target, source->names[i]);
+	}
+}
+
+static void
+_collectLocalName(Stmt *stmt, void *context) {
+	if (stmt->kind == STMT_LOCAL_DECL) {
+		nameSetAdd((NameSet *)context, stmt->localDecl.name);
+	}
+}
+
+typedef struct {
+	Program *program;
+	const NameSet *locals;
+	bool ok;
+} DefAssignScope;
+
+static void _daNode(Stmt *stmt, DefAssignScope *scope, NameSet *assigned);
+
+/* Checks the reads of a leaf statement (or wrapped expression) against the assigned set,
+ * then marks its writes assigned. */
+static void
+_daAccesses(Stmt *stmt, DefAssignScope *scope, NameSet *assigned) {
+	NameSet reads = { 0 };
+	NameSet writes = { 0 };
+	collectStmtAccesses(stmt, scope->program, &reads, &writes);
+	for (int i = 0; i < reads.count; ++i) {
+		if (nameSetContains(scope->locals, reads.names[i]) && !nameSetContains(assigned, reads.names[i])) {
+			scope->ok = false;
+		}
+	}
+	for (int i = 0; i < writes.count; ++i) {
+		if (!nameSetContains(assigned, writes.names[i])) {
+			nameSetAdd(assigned, writes.names[i]);
+		}
+	}
+	nameSetFree(&reads);
+	nameSetFree(&writes);
+}
+
+static void
+_daExpr(Expr *expr, DefAssignScope *scope, NameSet *assigned) {
+	Stmt wrapped = { .kind = STMT_EXPR };
+	wrapped.exprStmt = expr;
+	_daAccesses(&wrapped, scope, assigned);
+}
+
+static void
+_daNode(Stmt *stmt, DefAssignScope *scope, NameSet *assigned) {
+	if (stmt == NULL) {
+		return;
+	}
+	switch (stmt->kind) {
+	case STMT_COMPOUND:
+		for (StmtList *node = stmt->compound; node != NULL; node = node->next) {
+			_daNode(node->stmt, scope, assigned);
+		}
+		break;
+	case STMT_IF: {
+		_daExpr(stmt->ifStmt.condition, scope, assigned);
+		NameSet thenSet = { 0 };
+		NameSet elseSet = { 0 };
+		_nameSetCopy(assigned, &thenSet);
+		_nameSetCopy(assigned, &elseSet);
+		_daNode(stmt->ifStmt.thenBranch, scope, &thenSet);
+		_daNode(stmt->ifStmt.elseBranch, scope, &elseSet);
+		/* A name is assigned after the if only if both branches assign it. */
+		if (stmt->ifStmt.elseBranch != NULL) {
+			for (int i = 0; i < thenSet.count; ++i) {
+				if (nameSetContains(&elseSet, thenSet.names[i]) && !nameSetContains(assigned, thenSet.names[i])) {
+					nameSetAdd(assigned, thenSet.names[i]);
+				}
+			}
+		}
+		nameSetFree(&thenSet);
+		nameSetFree(&elseSet);
+		break;
+	}
+	case STMT_FOR: {
+		/* The init runs once; the body/update may not run, so their assignments do not persist. */
+		_daNode(stmt->forStmt.init, scope, assigned);
+		_daExpr(stmt->forStmt.condition, scope, assigned);
+		NameSet bodySet = { 0 };
+		_nameSetCopy(assigned, &bodySet);
+		_daNode(stmt->forStmt.body, scope, &bodySet);
+		_daExpr(stmt->forStmt.update, scope, &bodySet);
+		nameSetFree(&bodySet);
+		break;
+	}
+	case STMT_WHILE: {
+		_daExpr(stmt->whileStmt.condition, scope, assigned);
+		NameSet bodySet = { 0 };
+		_nameSetCopy(assigned, &bodySet);
+		_daNode(stmt->whileStmt.body, scope, &bodySet);
+		nameSetFree(&bodySet);
+		break;
+	}
+	case STMT_PARALLEL: {
+		/* Units are concurrent: none sees another's write, but all writes land afterwards. */
+		for (StmtList *node = stmt->parallel; node != NULL; node = node->next) {
+			NameSet unitSet = { 0 };
+			_nameSetCopy(assigned, &unitSet);
+			_daNode(node->stmt, scope, &unitSet);
+			nameSetFree(&unitSet);
+		}
+		NameSet reads = { 0 };
+		NameSet writes = { 0 };
+		collectStmtAccesses(stmt, scope->program, &reads, &writes);
+		for (int i = 0; i < writes.count; ++i) {
+			if (!nameSetContains(assigned, writes.names[i])) {
+				nameSetAdd(assigned, writes.names[i]);
+			}
+		}
+		nameSetFree(&reads);
+		nameSetFree(&writes);
+		break;
+	}
+	default: /* STMT_EXPR, STMT_RETURN, STMT_LOCAL_DECL */
+		_daAccesses(stmt, scope, assigned);
+		if (stmt->kind == STMT_LOCAL_DECL && (stmt->localDecl.init != NULL || stmt->localDecl.initList != NULL)) {
+			nameSetAdd(assigned, stmt->localDecl.name);
+		}
+		break;
+	}
+}
+
+static bool
+_checkDefiniteAssignment(Program *program) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (decl->kind != DECL_FUNCTION || decl->func.sequential) {
+			continue;
+		}
+		NameSet locals = { 0 };
+		walkStmts(decl->func.body, _collectLocalName, &locals);
+		NameSet assigned = { 0 };
+		for (ParamList *param = decl->func.params; param != NULL; param = param->next) {
+			nameSetAdd(&assigned, param->param->name);
+		}
+		DefAssignScope scope = { .program = program, .locals = &locals, .ok = true };
+		_daNode(decl->func.body, &scope, &assigned);
+		nameSetFree(&locals);
+		nameSetFree(&assigned);
+		if (!scope.ok) {
+			return false;
+		}
+	}
+	return true;
+}
+
 /* A reference read and written in a combinational function becomes an inout port driven
  * by always_comb that reads its own output: a combinational loop (unsynthesizable). Such
  * a read-modify needs a register, i.e. a __sequential function. */
@@ -1394,6 +1550,10 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 	}
 	if (!_checkCombinationalRefs(program)) {
 		logError(_logger, "A read-write reference requires a __sequential function (it forms a combinational loop).");
+		return false;
+	}
+	if (!_checkDefiniteAssignment(program)) {
+		logError(_logger, "A local variable may be read before it is assigned on every path (infers a latch).");
 		return false;
 	}
 	logDebugging(_logger, "Semantic analysis succeeded.");

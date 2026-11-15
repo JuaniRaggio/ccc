@@ -22,6 +22,7 @@ empíricamente antes y después del fix, con un test de rechazo cuando aplica.
 | F12 | Parámetros arreglo escritos se emitían como puerto `input` (no sintetizable, `ASSIGNIN`); era la forma canónica de producir un buffer de salida. | Alto | ✅ | La dirección de un `PARAM_ARRAY` se infiere de lecturas/escrituras como las referencias. Accept 35 (`output`, lint-clean). | #15 |
 | F13 | Referencia leída y escrita en función combinacional: puerto `inout` manejado por `always_comb` que se lee a sí mismo → bucle combinacional (`UNOPTFLAT`). | Medio | ✅ | Se rechaza una referencia read-write en función no-`__sequential` (requiere registro). Reject 45. | #15 |
 | F14 | Overflow de `-INT64_MIN` en `constexpr` (unario `-` e `__abs`) sin guardia (UB en el compilador). | Bajo | ✅ | Guardia de overflow en neg/abs del intérprete. | #15 |
+| F15 | Local leído antes de asignarse en algún camino (p. ej. asignado sólo en una rama `if`) infería un latch; sólo lo atrapaba el lint. | Medio | ✅ | Pase de asignación definida: rechaza leer un local que no está asignado en todo camino (if/else exhaustivo, decl con init, etc.). Reject 46. | #16 |
 
 ## Descartados (verificados, no eran bugs)
 
