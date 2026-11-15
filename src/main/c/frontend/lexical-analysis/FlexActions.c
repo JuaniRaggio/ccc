@@ -111,10 +111,13 @@ IgnoredLexemeAction() {
 	return IN_PROGRESS;
 }
 
-/* Parses a decimal, hexadecimal (0x) or binary (0b) literal, ignoring '_' separators. */
+/* Parses a decimal, hexadecimal (0x) or binary (0b) literal, ignoring '_' separators.
+ * Accumulates in uint64_t so the full 64-bit range is representable; sets *overflow if
+ * the value exceeds 64 bits. */
 static int64_t
-_parseInteger(const char *lexeme) {
-	int base = DECIMAL_BASE;
+_parseInteger(const char *lexeme, bool *overflow) {
+	*overflow = false;
+	uint64_t base = DECIMAL_BASE;
 	if (lexeme[0] == '0' && (lexeme[1] == 'x' || lexeme[1] == 'X')) {
 		base = HEX_BASE;
 		lexeme += 2;
@@ -122,13 +125,13 @@ _parseInteger(const char *lexeme) {
 		base = BINARY_BASE;
 		lexeme += 2;
 	}
-	int64_t value = 0;
+	uint64_t value = 0;
 	for (; *lexeme != '\0'; ++lexeme) {
 		char character = *lexeme;
 		if (character == '_') {
 			continue;
 		}
-		int digit;
+		uint64_t digit;
 		if (character >= '0' && character <= '9') {
 			digit = character - '0';
 		} else if (character >= 'a' && character <= 'f') {
@@ -136,16 +139,27 @@ _parseInteger(const char *lexeme) {
 		} else {
 			digit = character - 'A' + HEX_LETTER_OFFSET;
 		}
+		if (value > (UINT64_MAX - digit) / base) {
+			*overflow = true;
+			return 0;
+		}
 		value = value * base + digit;
 	}
-	return value;
+	return (int64_t)value;
 }
 
 CompilationStatus
 IntegerLexemeAction() {
 	Token *token = createToken(_lexicalAnalyzer, INTEGER);
-	token->semanticValue->integer = _parseInteger(token->lexeme);
+	bool overflow = false;
+	token->semanticValue->integer = _parseInteger(token->lexeme, &overflow);
 	_logTokenAction(__FUNCTION__, token);
+	if (overflow) {
+		logError(_logger, "Integer literal '%s' does not fit in 64 bits.", token->lexeme);
+		_abortSyntacticAnalysis(token);
+		destroyToken(token);
+		return FAILED;
+	}
 	CompilationStatus status = pushToken(_lexicalAnalyzer, token);
 	destroyToken(token);
 	return status;

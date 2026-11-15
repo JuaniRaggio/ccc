@@ -63,7 +63,7 @@ parte del tipo; no hay enteros de ancho dependiente de la plataforma.
 Decimal (`42`), hexadecimal (`0x2A`) o binario (`0b101010`); `_` es separador y se ignora
 (`1_000`). Un literal es convertible a cualquier tipo entero que represente su valor
 (`uint8_t x = 200;` es válido; `= 300` es error, @sec-int-overflow). Sin contexto, su tipo es
-`int32_t`.
+`int32_t`. El literal debe caber en 64 bits; si no, es error.
 
 == Conversiones implícitas
 
@@ -89,13 +89,17 @@ tengan el mismo ancho (si no, error semántico).
 == Ancho del resultado <sec-int-width>
 
 En una operación binaria ambos operandos deben tener la misma signedness (si no, error que exige
-cast). El más angosto se ensancha al más ancho (el _tipo común_); el resultado aritmético tiene
-el tipo común, sin promoción a un ancho base, y puede desbordarlo (@sec-int-overflow). Para el
-producto completo, ensanchar antes:
+cast). A efectos de tipos, el más angosto se ensancha al más ancho (el _tipo común_), sin promoción
+a un ancho base.
+
+El ancho real del cómputo lo fija el _contexto_ (el destino de la asignación), siguiendo la
+semántica de SystemVerilog: un resultado intermedio puede evaluarse a un ancho mayor que el tipo
+común y, por lo tanto, no envolver a ese ancho. Si se necesita que el valor envuelva a un ancho
+determinado, hay que forzarlo con un cast explícito. Para el producto completo, ensanchar antes:
 
 ```c
 uint16_t a, b;
-uint32_t prod = (uint32_t)a * (uint32_t)b;  // 32 bits, no desborda
+uint32_t prod = static_cast<uint32_t>(a) * static_cast<uint32_t>(b);  // 32 bits
 ```
 
 Las comparaciones producen `bool` cualquiera sea el ancho de los operandos.
@@ -135,7 +139,8 @@ pasa como parámetro arreglo (`tipo nombre[tamaño]`).
 Cada función se traduce a un módulo *combinacional*: los parámetros por valor son puertos de
 entrada, las referencias son puertos de salida, el retorno es el puerto `out`, y el cuerpo es
 lógica combinacional (`always_comb`). Los `for` de límite estático se desenrollan. No hay puertos
-de reloj ni reset.
+de reloj ni reset. Una función no-`void` debe asignar `out` en todo camino (debe retornar en todas
+las ramas); si no, se infiere un latch y se rechaza.
 
 == Bloques `__parallel`
 
