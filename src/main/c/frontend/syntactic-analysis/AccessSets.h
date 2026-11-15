@@ -10,8 +10,10 @@ typedef struct {
 	int capacity;
 } NameSet;
 
-/* Collects the identifiers read and written by a statement subtree. */
-void collectStmtAccesses(Stmt *stmt, NameSet *reads, NameSet *writes);
+/* Collects the identifiers read and written by a statement subtree. When `program` is
+ * given, a reference argument of a call is attributed as the callee reads/writes the
+ * corresponding parameter; pass NULL to skip that (intra-body accesses only). */
+void collectStmtAccesses(Stmt *stmt, Program *program, NameSet *reads, NameSet *writes);
 
 void nameSetAdd(NameSet *set, char *name);
 bool nameSetContains(const NameSet *set, const char *name);

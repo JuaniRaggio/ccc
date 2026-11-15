@@ -1,0 +1,6 @@
+void inner(int32_t &x) {
+    x = 5;
+}
+void outer(int32_t &r) {
+    inner(r);
+}
