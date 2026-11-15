@@ -26,6 +26,7 @@ empíricamente antes y después del fix, con un test de rechazo cuando aplica.
 | F16 | `return` temprano en función combinacional se miscompila en silencio: cada return emite `out = expr;` sin guarda, gana el último (p. ej. `clamp` con guard-clauses daba resultados erróneos). | Crítico | ✅ | Se exige que los returns estén en posición tail (sin código después); el idioma soportado es `if/else` con un return por rama. Reject 47. | #17 |
 | F17 | Parámetro arreglo leído y escrito en función combinacional → puerto `inout` con bucle (`UNOPTFLAT`); el chequeo de ref read-write no cubría arreglos. | Medio | ✅ | El chequeo de read-write se extiende a `PARAM_ARRAY`. Reject 48. | #17 |
 | F18 | Compound-assign (`+=`/`-=`/`*=`) en `constexpr` sin guarda de overflow (UB), inconsistente con `_evalBinary`. | Bajo | ✅ | Builtins con chequeo de overflow en los compound-assign del intérprete. | #17 |
+| F19 | Intrínsecos `__min`/`__max`/`__abs` fijaban el tipo de resultado a `int32_t`: `__min(int64,int64)` narrowaba en silencio, mezcla de signo no se rechazaba, y `__min(uint,uint)` se over-rechazaba. Misma clase que F11/F1. | Alto | ✅ | El resultado sigue a los operandos: `__abs` conserva el tipo, `__min`/`__max` el tipo común y rechazan mezcla de signo. Accept 36, reject 49/50. | #19 |
 
 ## Descartados (verificados, no eran bugs)
 
@@ -37,6 +38,7 @@ empíricamente antes y después del fix, con un test de rechazo cuando aplica.
 
 - *Asignación definida a nivel de nombre, no de elemento*: escribir `a[0]` marca todo el arreglo `a` como asignado, así que `a[0]=1; return a[1];` se acepta aunque `a[1]` quede sin manejar (el lint de Verilator no detecta latch por-elemento en arreglos unpacked). Igual aplica a buffers de salida parcialmente manejados. Rastrear por-elemento es un trabajo aparte.
 - *Over-rejection de la asignación definida en bucles*: un local asignado en todo iteración de un bucle que siempre corre, y leído después, se rechaza (el pase descarta las asignaciones del cuerpo porque el bucle "podría no correr"). Conservador/sound; inicializar la variable lo evita.
+- *Read-write de arreglo a nivel de nombre*: el chequeo de read-write combinacional (F17) es por nombre base, así que `a[1] = a[0] + 1` (elementos distintos, sin self-loop) también se rechaza. Conservador/sound; no usa la maquinaria de slices del aliasing.
 - Construcción de listas O(n²) en `BisonActions` (append al final): irrelevante para tamaños reales.
 - Profundidad de recursión del DFS de no-recursión: límite teórico de stack.
 - Globales de call-nodes en el generador: use-after-free latente, hoy inalcanzable (bloqueado por un chequeo semántico).

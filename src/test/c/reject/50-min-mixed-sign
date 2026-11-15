@@ -1,0 +1,3 @@
+int32_t f(int32_t a, uint32_t b) {
+    return __min(a, b);
+}
