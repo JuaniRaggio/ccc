@@ -1464,6 +1464,88 @@ _checkDefiniteAssignment(Program *program) {
 	return true;
 }
 
+/* A combinational function emits each return as an unguarded `out = expr;`, so an early
+ * return does not short-circuit the statements after it (the last assignment wins). To
+ * keep that sound, returns are only allowed in tail position: nothing may execute after
+ * one. The if/else form (a return per branch, nothing after) is the supported idiom. */
+static bool
+_hasReturn(Stmt *stmt) {
+	if (stmt == NULL) {
+		return false;
+	}
+	switch (stmt->kind) {
+	case STMT_RETURN:
+		return true;
+	case STMT_IF:
+		return _hasReturn(stmt->ifStmt.thenBranch) || _hasReturn(stmt->ifStmt.elseBranch);
+	case STMT_FOR:
+		return _hasReturn(stmt->forStmt.body);
+	case STMT_WHILE:
+		return _hasReturn(stmt->whileStmt.body);
+	case STMT_COMPOUND:
+		for (StmtList *node = stmt->compound; node != NULL; node = node->next) {
+			if (_hasReturn(node->stmt)) {
+				return true;
+			}
+		}
+		return false;
+	case STMT_PARALLEL:
+		for (StmtList *node = stmt->parallel; node != NULL; node = node->next) {
+			if (_hasReturn(node->stmt)) {
+				return true;
+			}
+		}
+		return false;
+	default:
+		return false;
+	}
+}
+
+static bool
+_tailReturnsOk(Stmt *stmt) {
+	if (stmt == NULL) {
+		return true;
+	}
+	switch (stmt->kind) {
+	case STMT_RETURN:
+		return true;
+	case STMT_IF:
+		return _tailReturnsOk(stmt->ifStmt.thenBranch) && _tailReturnsOk(stmt->ifStmt.elseBranch);
+	case STMT_COMPOUND:
+		for (StmtList *node = stmt->compound; node != NULL; node = node->next) {
+			if (node->next == NULL) {
+				return _tailReturnsOk(node->stmt);
+			}
+			if (_hasReturn(node->stmt)) {
+				return false;
+			}
+		}
+		return true;
+	case STMT_FOR:
+		return !_hasReturn(stmt->forStmt.body);
+	case STMT_WHILE:
+		return !_hasReturn(stmt->whileStmt.body);
+	case STMT_PARALLEL:
+		return !_hasReturn(stmt);
+	default:
+		return true;
+	}
+}
+
+static bool
+_checkTailReturns(Program *program) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (decl->kind != DECL_FUNCTION || decl->func.sequential) {
+			continue;
+		}
+		if (!_tailReturnsOk(decl->func.body)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 /* A reference read and written in a combinational function becomes an inout port driven
  * by always_comb that reads its own output: a combinational loop (unsynthesizable). Such
  * a read-modify needs a register, i.e. a __sequential function. */
@@ -1479,8 +1561,8 @@ _checkCombinationalRefs(Program *program) {
 		collectStmtAccesses(decl->func.body, program, &reads, &writes);
 		bool violation = false;
 		for (ParamList *param = decl->func.params; param != NULL; param = param->next) {
-			if (param->param->kind == PARAM_REF && nameSetContains(&reads, param->param->name)
-			    && nameSetContains(&writes, param->param->name)) {
+			if ((param->param->kind == PARAM_REF || param->param->kind == PARAM_ARRAY)
+			    && nameSetContains(&reads, param->param->name) && nameSetContains(&writes, param->param->name)) {
 				violation = true;
 				break;
 			}
@@ -1507,6 +1589,11 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 	}
 	if (!_checkReturns(program)) {
 		logError(_logger, "A non-void function must return a value on every path.");
+		return false;
+	}
+	if (!_checkTailReturns(program)) {
+		logError(_logger,
+		         "A return must be in tail position (no statements after it); use if/else with a return per branch.");
 		return false;
 	}
 	if (!_checkNoRecursion(program)) {
@@ -1549,7 +1636,8 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 		return false;
 	}
 	if (!_checkCombinationalRefs(program)) {
-		logError(_logger, "A read-write reference requires a __sequential function (it forms a combinational loop).");
+		logError(_logger,
+		         "A read-write reference or array requires a __sequential function (it forms a combinational loop).");
 		return false;
 	}
 	if (!_checkDefiniteAssignment(program)) {

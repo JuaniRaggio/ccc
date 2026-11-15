@@ -218,12 +218,17 @@ _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 		if (expr->assign.op != ASSIGN_PLAIN) {
 			_envGet(env, expr->assign.target->name, &current);
 		}
+		bool overflow = false;
 		if (expr->assign.op == ASSIGN_ADD) {
-			value = current + value;
+			overflow = __builtin_add_overflow(current, value, &value);
 		} else if (expr->assign.op == ASSIGN_SUB) {
-			value = current - value;
+			overflow = __builtin_sub_overflow(current, value, &value);
 		} else if (expr->assign.op == ASSIGN_MUL) {
-			value = current * value;
+			overflow = __builtin_mul_overflow(current, value, &value);
+		}
+		if (overflow) {
+			*ok = false;
+			return 0;
 		}
 		_envSet(env, expr->assign.target->name, value);
 		return value;
