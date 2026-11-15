@@ -671,14 +671,31 @@ _inferType(Expr *expr, Scope *scope, Program *program, bool *ok) {
 		}
 		return function->func.returnType;
 	}
-	case EXPR_INTRINSIC:
-		for (ExprList *argNode = expr->intrinsic.args; argNode != NULL; argNode = argNode->next) {
-			if (_category(_inferType(argNode->expr, scope, program, ok)) != CAT_INTEGER) {
-				logError(_logger, "Builtin requires integer arguments.");
-				*ok = false;
-			}
+	case EXPR_INTRINSIC: {
+		/* The result type follows the operands (like arithmetic), not a hardcoded int32:
+		 * __abs keeps the operand type; __min/__max take the common type and, like binary
+		 * ops, reject mixed signedness. */
+		ExprList *args = expr->intrinsic.args;
+		Expr *first = args != NULL ? args->expr : NULL;
+		Expr *second = (args != NULL && args->next != NULL) ? args->next->expr : NULL;
+		TypeKind firstType = _inferType(first, scope, program, ok);
+		if (first != NULL && _category(firstType) != CAT_INTEGER) {
+			logError(_logger, "Builtin requires integer arguments.");
+			*ok = false;
 		}
-		return TYPE_INT32;
+		if (second == NULL) {
+			return firstType;
+		}
+		TypeKind secondType = _inferType(second, scope, program, ok);
+		if (_category(secondType) != CAT_INTEGER) {
+			logError(_logger, "Builtin requires integer arguments.");
+			*ok = false;
+		} else if (_mixedSignedness(first, firstType, second, secondType, program)) {
+			logError(_logger, "Mixing signed and unsigned operands requires an explicit cast.");
+			*ok = false;
+		}
+		return _commonArithmeticType(first, firstType, second, secondType, program);
+	}
 	default:
 		return _inferType(expr->postOp, scope, program, ok);
 	}
