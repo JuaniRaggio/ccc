@@ -197,7 +197,14 @@ _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 		return _evalBinary(expr, program, env, ok);
 	case EXPR_UNARY: {
 		int64_t operand = _eval(expr->unary.operand, program, env, ok);
-		return expr->unary.op == UNOP_NEG ? -operand : !operand;
+		if (expr->unary.op == UNOP_NEG) {
+			if (operand == INT64_MIN) { /* negating INT64_MIN overflows */
+				*ok = false;
+				return 0;
+			}
+			return -operand;
+		}
+		return !operand;
 	}
 	case EXPR_ASSIGN: {
 		int64_t value = _eval(expr->assign.value, program, env, ok);
@@ -234,6 +241,10 @@ _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 		}
 		int64_t first = _eval(expr->intrinsic.args->expr, program, env, ok);
 		if (expr->intrinsic.kind == INTRINSIC_ABS) {
+			if (first == INT64_MIN) { /* -INT64_MIN overflows */
+				*ok = false;
+				return 0;
+			}
 			return first < 0 ? -first : first;
 		}
 		if (expr->intrinsic.args->next == NULL) {

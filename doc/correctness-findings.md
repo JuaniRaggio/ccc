@@ -18,6 +18,10 @@ empíricamente antes y después del fix, con un test de rechazo cuando aplica.
 | F8 | `constexpr` emite SV basura: una función constexpr con `a[0]++` no evalúa y el generador emitía `localparam X = __call-1`. Además, misread de unión en `a[i]++`. | Alto | ✅ | Toda declaración `constexpr` debe evaluar a constante (reject 40); el intérprete falla limpio en lvalues no escalares. | #10 |
 | F9 | Dirección de puerto incorrecta: una referencia escrita sólo vía una llamada anidada se emite como `input` en vez de `output`. | Alto | ✅ | `AccessSets` atribuye un argumento por referencia según lo que el callee lee/escribe del parámetro. Accept 32 (`output`, lint-clean). | #11 |
 | F10 | Señal multi-driver: un local manejado a la vez por una asignación `always_comb` y por la instancia de una llamada (ref) se aceptaba (lo atrapaba sólo el lint). | Medio | ✅ | Chequeo de driver único en el frontend: un nombre no puede ser escrito por asignación y por un call (ref), ni por dos calls. Reject 41. | #12 |
+| F11 | Tipo del resultado aritmético = operando izquierdo: `int8 a + int32 b` asignado a `int8` narrowa en silencio; `1 + b` (literal a la izq) se rechazaba aunque `b + 1` se aceptaba. | Alto | ✅ | Tipo común: una constante que se adapta toma el tipo del otro operando, si no gana el más ancho. Accept 34, reject 44. | #15 |
+| F12 | Parámetros arreglo escritos se emitían como puerto `input` (no sintetizable, `ASSIGNIN`); era la forma canónica de producir un buffer de salida. | Alto | ✅ | La dirección de un `PARAM_ARRAY` se infiere de lecturas/escrituras como las referencias. Accept 35 (`output`, lint-clean). | #15 |
+| F13 | Referencia leída y escrita en función combinacional: puerto `inout` manejado por `always_comb` que se lee a sí mismo → bucle combinacional (`UNOPTFLAT`). | Medio | ✅ | Se rechaza una referencia read-write en función no-`__sequential` (requiere registro). Reject 45. | #15 |
+| F14 | Overflow de `-INT64_MIN` en `constexpr` (unario `-` e `__abs`) sin guardia (UB en el compilador). | Bajo | ✅ | Guardia de overflow en neg/abs del intérprete. | #15 |
 
 ## Descartados (verificados, no eran bugs)
 

@@ -1,0 +1,3 @@
+void accum(int32_t &acc, int32_t x) {
+    acc = acc + x;
+}

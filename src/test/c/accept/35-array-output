@@ -1,0 +1,6 @@
+void fill(uint32_t x, uint32_t buf[4]) {
+    buf[0] = x;
+    buf[1] = x;
+    buf[2] = x;
+    buf[3] = x;
+}
