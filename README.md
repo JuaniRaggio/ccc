@@ -45,7 +45,7 @@ El compilador procesa un programa en cuatro fases. Las tres primeras forman el *
 ```mermaid
 flowchart LR
     src([Programa fuente]) --> lex[Léxico<br/>Flex]
-    lex -->|tokens| par[Sintáctico<br/>Bison → AST]
+    lex -->|tokens| par[Sintáctico<br/>Bison a AST]
     par -->|no deriva| rej([Rechazo])
     par -->|AST| sem[Semántico<br/>reglas del lenguaje]
     sem -->|viola regla| rej
