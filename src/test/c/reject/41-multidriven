@@ -1,0 +1,9 @@
+void g(int32_t &x) {
+    x = 1;
+}
+int32_t f(int32_t a) {
+    int32_t r;
+    r = a;
+    g(r);
+    return r;
+}
