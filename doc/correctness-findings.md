@@ -31,7 +31,10 @@ empíricamente antes y después del fix, con un test de rechazo cuando aplica.
 - Profundidad de recursión del DFS de no-recursión: límite teórico de stack.
 - Globales de call-nodes en el generador: use-after-free latente, hoy inalcanzable (bloqueado por un chequeo semántico).
 
+## Hecho (features)
+
+- Aliasing de slices: dos referencias a elementos con índice constante distinto del mismo arreglo (`a[0]`, `a[1]`) ya no se rechazan; el chequeo de aliasing y el de driver único son slice-aware. Accept 33, reject 43.
+
 ## Pendiente (features, no bugs)
 
-- Aliasing de slices solapados: el chequeo `unique`/`aliased` colapsa `a[i]`/`a[j]` a la base (conservador).
 - FSM secuencial multi-bucle (anidados + llamadas); handshake `ready`/`valid`.

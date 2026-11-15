@@ -1,0 +1,9 @@
+void init2(int32_t & unique x, int32_t & unique y) {
+    x = 1;
+    y = 2;
+}
+int32_t caller() {
+    int32_t arr[2];
+    init2(arr[0], arr[0]);
+    return arr[0];
+}

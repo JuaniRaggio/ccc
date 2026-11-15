@@ -1,5 +1,4 @@
 #include "AccessSets.h"
-#include "AstWalk.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -229,40 +228,4 @@ _collectStmt(Stmt *stmt, Program *program, NameSet *reads, NameSet *writes, bool
 void
 collectStmtAccesses(Stmt *stmt, Program *program, NameSet *reads, NameSet *writes) {
 	_collectStmt(stmt, program, reads, writes, true);
-}
-
-typedef struct {
-	Program *program;
-	NameSet *driven;
-} CallDrivenContext;
-
-static void
-_collectCallDriven(Expr *expr, void *context) {
-	if (expr->kind != EXPR_CALL) {
-		return;
-	}
-	CallDrivenContext *ctx = context;
-	Decl *callee = _findFunction(ctx->program, expr->call.name);
-	if (callee == NULL) {
-		return;
-	}
-	ParamList *param = callee->func.params;
-	for (ExprList *argNode = expr->call.args; argNode != NULL && param != NULL;
-	     argNode = argNode->next, param = param->next) {
-		if (param->param->kind != PARAM_REF) {
-			continue;
-		}
-		bool read, written;
-		_calleeParamDirection(callee, param->param->name, &read, &written);
-		char *base = _lvalueBase(argNode->expr);
-		if (written && base != NULL) {
-			_add(ctx->driven, base);
-		}
-	}
-}
-
-void
-collectCallRefWrites(Stmt *stmt, Program *program, NameSet *driven) {
-	CallDrivenContext ctx = { .program = program, .driven = driven };
-	walkStmtExprs(stmt, _collectCallDriven, &ctx);
 }

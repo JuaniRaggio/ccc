@@ -95,7 +95,6 @@ Las decisiones de diseño ya tomadas están en [`doc/language-reference.typ`](do
 
 | Prioridad | Tarea |
 | :-------- | :---- |
-| Mediano   | Slices solapados en el chequeo de aliasing (`unique`/`aliased`). |
 | Largo     | FSM secuencial multi-bucle: bucles anidados y llamadas a función dentro de `__sequential`. |
 | Largo     | Handshake `ready`/`valid` como alternativa a `start`/`done`. |
 
