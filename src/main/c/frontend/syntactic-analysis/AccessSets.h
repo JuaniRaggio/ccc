@@ -15,11 +15,6 @@ typedef struct {
  * corresponding parameter; pass NULL to skip that (intra-body accesses only). */
 void collectStmtAccesses(Stmt *stmt, Program *program, NameSet *reads, NameSet *writes);
 
-/* Collects the names driven by a reference-output argument of a call (the callee writes
- * the corresponding reference parameter). In the generated hardware each such name is
- * driven by a module instance. */
-void collectCallRefWrites(Stmt *stmt, Program *program, NameSet *driven);
-
 void nameSetAdd(NameSet *set, char *name);
 bool nameSetContains(const NameSet *set, const char *name);
 bool nameSetsIntersect(const NameSet *a, const NameSet *b);

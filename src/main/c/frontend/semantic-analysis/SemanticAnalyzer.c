@@ -811,24 +811,47 @@ typedef struct {
 	bool violation;
 } AliasScope;
 
-/*
- * The base symbol of an lvalue argument, or NULL if it is not a plain lvalue.
- * Array elements collapse to their base (a[i] and a[j] share the symbol a), so
- * aliasing on an array is flagged conservatively: distinct indices are not
- * proven disjoint without index analysis.
- */
-static const char *
-_lvalueSymbol(Expr *expr) {
+/* A reference argument as a memory slice: its base symbol plus, for an array element,
+ * the index (resolved to a constant when possible). `base == NULL` means it is not a
+ * plain lvalue. */
+typedef struct {
+	const char *base;
+	bool indexed;
+	bool constantIndex;
+	int64_t index;
+	bool unique;
+} RefSlice;
+
+static RefSlice
+_refSlice(Expr *expr, Program *program) {
+	RefSlice slice = { 0 };
 	if (expr == NULL) {
-		return NULL;
+		return slice;
 	}
 	if (expr->kind == EXPR_IDENTIFIER) {
-		return expr->name;
+		slice.base = expr->name;
+	} else if (expr->kind == EXPR_ARRAY_ACCESS && expr->arrayAccess.array->kind == EXPR_IDENTIFIER) {
+		slice.base = expr->arrayAccess.array->name;
+		slice.indexed = true;
+		slice.constantIndex = evalConstexpr(expr->arrayAccess.index, program, &slice.index);
 	}
-	if (expr->kind == EXPR_ARRAY_ACCESS && expr->arrayAccess.array->kind == EXPR_IDENTIFIER) {
-		return expr->arrayAccess.array->name;
+	return slice;
+}
+
+/* Two slices on the same base overlap unless both are array elements with distinct
+ * constant indices (a[0] and a[1] are disjoint; a[i] and a[j] are not provably so). */
+static bool
+_slicesOverlap(const RefSlice *a, const RefSlice *b) {
+	if (a->base == NULL || b->base == NULL || strcmp(a->base, b->base) != 0) {
+		return false;
 	}
-	return NULL;
+	if (!a->indexed || !b->indexed) {
+		return true;
+	}
+	if (a->constantIndex && b->constantIndex) {
+		return a->index == b->index;
+	}
+	return true;
 }
 
 static void
@@ -848,28 +871,25 @@ _checkAliasingCall(Expr *expr, void *context) {
 	if (count == 0) {
 		return;
 	}
-	const char **symbols = calloc(count, sizeof(*symbols));
-	bool *unique = calloc(count, sizeof(*unique));
+	RefSlice *slices = calloc(count, sizeof(*slices));
 	int index = 0;
 	ParamList *param = function->func.params;
 	for (ExprList *arg = expr->call.args; arg != NULL && param != NULL; arg = arg->next, param = param->next, ++index) {
 		if (param->param->kind == PARAM_REF) {
-			symbols[index] = _lvalueSymbol(arg->expr);
-			unique[index] = param->param->qualifier == QUALIFIER_UNIQUE;
+			slices[index] = _refSlice(arg->expr, scope->program);
+			slices[index].unique = param->param->qualifier == QUALIFIER_UNIQUE;
 		}
 	}
 	for (int i = 0; i < count; ++i) {
 		for (int j = i + 1; j < count; ++j) {
-			if (symbols[i] != NULL && symbols[j] != NULL && strcmp(symbols[i], symbols[j]) == 0
-			    && (unique[i] || unique[j])) {
-				logError(_logger, "Argument '%s' aliases a unique reference in call to '%s'.", symbols[i],
+			if ((slices[i].unique || slices[j].unique) && _slicesOverlap(&slices[i], &slices[j])) {
+				logError(_logger, "Argument '%s' aliases a unique reference in call to '%s'.", slices[i].base,
 				         expr->call.name);
 				scope->violation = true;
 			}
 		}
 	}
-	free(symbols);
-	free(unique);
+	free(slices);
 }
 
 static bool
@@ -1182,9 +1202,56 @@ _checkConstexprEvaluable(Program *program) {
 	return true;
 }
 
+static bool
+_calleeWritesRef(Decl *callee, const char *param) {
+	NameSet reads = { 0 };
+	NameSet writes = { 0 };
+	collectStmtAccesses(callee->func.body, NULL, &reads, &writes);
+	bool written = nameSetContains(&writes, param);
+	nameSetFree(&reads);
+	nameSetFree(&writes);
+	return written;
+}
+
+typedef struct {
+	Program *program;
+	RefSlice *slices;
+	int count;
+	int capacity;
+} DrivenScope;
+
+/* Collects the slices driven by a call's reference output (the callee writes the param). */
+static void
+_collectDrivenSlice(Expr *expr, void *context) {
+	DrivenScope *scope = context;
+	if (expr->kind != EXPR_CALL) {
+		return;
+	}
+	Decl *callee = _findFunction(scope->program, expr->call.name);
+	if (callee == NULL) {
+		return;
+	}
+	ParamList *param = callee->func.params;
+	for (ExprList *arg = expr->call.args; arg != NULL && param != NULL; arg = arg->next, param = param->next) {
+		if (param->param->kind != PARAM_REF || !_calleeWritesRef(callee, param->param->name)) {
+			continue;
+		}
+		RefSlice slice = _refSlice(arg->expr, scope->program);
+		if (slice.base == NULL) {
+			continue;
+		}
+		if (scope->count == scope->capacity) {
+			scope->capacity = scope->capacity == 0 ? 4 : scope->capacity * 2;
+			scope->slices = realloc(scope->slices, scope->capacity * sizeof(RefSlice));
+		}
+		scope->slices[scope->count++] = slice;
+	}
+}
+
 /* In a combinational module a name assigned procedurally (always_comb) must not also be
- * driven by a call's reference output (a module instance), nor driven by two instances;
- * otherwise the signal has multiple drivers. */
+ * driven by a call's reference output (a module instance), nor may two call outputs drive
+ * overlapping storage; otherwise the signal has multiple drivers. Distinct constant array
+ * elements (a[0] and a[1]) are disjoint and allowed. */
 static bool
 _checkSingleDriver(Program *program) {
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
@@ -1194,15 +1261,20 @@ _checkSingleDriver(Program *program) {
 		}
 		NameSet reads = { 0 };
 		NameSet procedural = { 0 };
-		NameSet driven = { 0 };
 		collectStmtAccesses(decl->func.body, NULL, &reads, &procedural);
 		walkStmts(decl->func.body, _addDeclWrite, &procedural);
-		collectCallRefWrites(decl->func.body, program, &driven);
 
-		bool conflict = nameSetsIntersect(&driven, &procedural);
+		DrivenScope driven = { .program = program };
+		walkStmtExprs(decl->func.body, _collectDrivenSlice, &driven);
+
+		bool conflict = false;
 		for (int i = 0; i < driven.count && !conflict; ++i) {
+			if (nameSetContains(&procedural, driven.slices[i].base)) {
+				conflict = true;
+				break;
+			}
 			for (int j = i + 1; j < driven.count; ++j) {
-				if (strcmp(driven.names[i], driven.names[j]) == 0) {
+				if (_slicesOverlap(&driven.slices[i], &driven.slices[j])) {
 					conflict = true;
 					break;
 				}
@@ -1210,7 +1282,7 @@ _checkSingleDriver(Program *program) {
 		}
 		nameSetFree(&reads);
 		nameSetFree(&procedural);
-		nameSetFree(&driven);
+		free(driven.slices);
 		if (conflict) {
 			return false;
 		}
