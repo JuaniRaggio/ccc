@@ -11,6 +11,11 @@ _add(NameSet *set, char *name) {
 	set->names[set->count++] = name;
 }
 
+void
+nameSetAdd(NameSet *set, char *name) {
+	_add(set, name);
+}
+
 bool
 nameSetContains(const NameSet *set, const char *name) {
 	for (int i = 0; i < set->count; ++i) {

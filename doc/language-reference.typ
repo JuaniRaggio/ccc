@@ -168,7 +168,9 @@ epílogo (el `return`). La FSM tiene tres estados:
   de cumplirse registra el resultado en `out` y pasa a `CCC_DONE`.
 - `CCC_DONE`: asigna `done` en `1` por un ciclo y vuelve a `CCC_IDLE`.
 
-Las actualizaciones de registro usan asignación no bloqueante (`<=`): cada iteración lee los
-valores del flanco anterior. Los parámetros por valor son entradas que deben mantenerse estables
-durante la ejecución. Limitaciones actuales: un único bucle no anidado y sin llamadas a función en
-el cuerpo.
+Las actualizaciones de registro usan asignación no bloqueante (`<=`): las sentencias de un mismo
+ciclo son concurrentes, por lo que una lectura ve el valor del flanco anterior. Para que esto no
+contradiga el orden secuencial del código, se rechaza toda dependencia _read-after-write_ dentro de
+un ciclo (una sentencia que lee lo que otra anterior del mismo ciclo escribió); hay que separarla en
+iteraciones. Los parámetros por valor son entradas que deben mantenerse estables durante la
+ejecución. Limitaciones actuales: un único bucle no anidado y sin llamadas a función en el cuerpo.
