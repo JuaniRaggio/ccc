@@ -23,6 +23,9 @@ empíricamente antes y después del fix, con un test de rechazo cuando aplica.
 | F13 | Referencia leída y escrita en función combinacional: puerto `inout` manejado por `always_comb` que se lee a sí mismo → bucle combinacional (`UNOPTFLAT`). | Medio | ✅ | Se rechaza una referencia read-write en función no-`__sequential` (requiere registro). Reject 45. | #15 |
 | F14 | Overflow de `-INT64_MIN` en `constexpr` (unario `-` e `__abs`) sin guardia (UB en el compilador). | Bajo | ✅ | Guardia de overflow en neg/abs del intérprete. | #15 |
 | F15 | Local leído antes de asignarse en algún camino (p. ej. asignado sólo en una rama `if`) infería un latch; sólo lo atrapaba el lint. | Medio | ✅ | Pase de asignación definida: rechaza leer un local que no está asignado en todo camino (if/else exhaustivo, decl con init, etc.). Reject 46. | #16 |
+| F16 | `return` temprano en función combinacional se miscompila en silencio: cada return emite `out = expr;` sin guarda, gana el último (p. ej. `clamp` con guard-clauses daba resultados erróneos). | Crítico | ✅ | Se exige que los returns estén en posición tail (sin código después); el idioma soportado es `if/else` con un return por rama. Reject 47. | #17 |
+| F17 | Parámetro arreglo leído y escrito en función combinacional → puerto `inout` con bucle (`UNOPTFLAT`); el chequeo de ref read-write no cubría arreglos. | Medio | ✅ | El chequeo de read-write se extiende a `PARAM_ARRAY`. Reject 48. | #17 |
+| F18 | Compound-assign (`+=`/`-=`/`*=`) en `constexpr` sin guarda de overflow (UB), inconsistente con `_evalBinary`. | Bajo | ✅ | Builtins con chequeo de overflow en los compound-assign del intérprete. | #17 |
 
 ## Descartados (verificados, no eran bugs)
 
@@ -30,8 +33,10 @@ empíricamente antes y después del fix, con un test de rechazo cuando aplica.
 | :- | :------- | :-------- |
 | D1 | `static_cast<int32_t>(int8_t)` haría zero-extend en vez de sign-extend. | ⚪ Falso. `signed'(32'(y))` sign-extiende (probado: `-1` → `-1`). |
 
-## Menores / conocidos (no bloquean)
+## Limitaciones conocidas (sound, no bugs)
 
+- *Asignación definida a nivel de nombre, no de elemento*: escribir `a[0]` marca todo el arreglo `a` como asignado, así que `a[0]=1; return a[1];` se acepta aunque `a[1]` quede sin manejar (el lint de Verilator no detecta latch por-elemento en arreglos unpacked). Igual aplica a buffers de salida parcialmente manejados. Rastrear por-elemento es un trabajo aparte.
+- *Over-rejection de la asignación definida en bucles*: un local asignado en todo iteración de un bucle que siempre corre, y leído después, se rechaza (el pase descarta las asignaciones del cuerpo porque el bucle "podría no correr"). Conservador/sound; inicializar la variable lo evita.
 - Construcción de listas O(n²) en `BisonActions` (append al final): irrelevante para tamaños reales.
 - Profundidad de recursión del DFS de no-recursión: límite teórico de stack.
 - Globales de call-nodes en el generador: use-after-free latente, hoy inalcanzable (bloqueado por un chequeo semántico).
