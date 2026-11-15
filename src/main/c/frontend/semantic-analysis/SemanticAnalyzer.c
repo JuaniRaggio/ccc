@@ -260,6 +260,9 @@ _checkLoopBound(Stmt *stmt, void *context) {
 	if (stmt->kind == STMT_FOR) {
 		scope->inductionVar = _inductionVariable(stmt->forStmt.init);
 		walkExpr(stmt->forStmt.condition, _checkBoundIdentifier, scope);
+		/* The step must also be compile-time constant, or the trip count is dynamic
+		 * (not statically unrollable) even when the condition bound is constant. */
+		walkExpr(stmt->forStmt.update, _checkBoundIdentifier, scope);
 	} else if (stmt->kind == STMT_WHILE) {
 		scope->inductionVar = NULL;
 		walkExpr(stmt->whileStmt.condition, _checkBoundIdentifier, scope);
