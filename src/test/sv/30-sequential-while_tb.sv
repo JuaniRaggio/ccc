@@ -1,4 +1,5 @@
 // Drives the start/done handshake of the generated FSM and checks the result.
+// The instantiated module name must match the function in accept/30-sequential-while.
 // sum_to(10) = 0 + 1 + ... + 9 = 45.
 module sum_to_tb;
   logic        clk = 0, rst = 1, start = 0, done;

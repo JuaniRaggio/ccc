@@ -1,4 +1,5 @@
 // Drives the start/done handshake of the generated FSM and checks the result.
+// The instantiated module name must match the function in accept/31-sequential-for.
 // factorial(5) = 1 * 2 * 3 * 4 * 5 = 120.
 module factorial_tb;
   logic        clk = 0, rst = 1, start = 0, done;
