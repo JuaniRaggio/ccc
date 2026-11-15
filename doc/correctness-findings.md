@@ -27,7 +27,6 @@ empíricamente antes y después del fix, con un test de rechazo cuando aplica.
 
 ## Menores / conocidos (no bloquean)
 
-- Colisión de numeración en tests (`reject/32` duplicado): higiene, el harness los corre igual.
 - Construcción de listas O(n²) en `BisonActions` (append al final): irrelevante para tamaños reales.
 - Profundidad de recursión del DFS de no-recursión: límite teórico de stack.
 - Globales de call-nodes en el generador: use-after-free latente, hoy inalcanzable (bloqueado por un chequeo semántico).
