@@ -1155,6 +1155,31 @@ _checkReturns(Program *program) {
 	return true;
 }
 
+/* Every constexpr declaration must fold to a constant at compile time; otherwise the
+ * generator would emit a non-constant (or malformed) localparam instead of a value. */
+static bool
+_checkConstexprEvaluable(Program *program) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		int64_t value;
+		if (decl->kind == DECL_CONSTEXPR_VAR) {
+			if (!evalConstexpr(decl->constexprVar.init, program, &value)) {
+				return false;
+			}
+		} else if (decl->kind == DECL_CONSTEXPR_ARRAY) {
+			if (!evalConstexpr(decl->constexprArray.size, program, &value)) {
+				return false;
+			}
+			for (ExprList *element = decl->constexprArray.init; element != NULL; element = element->next) {
+				if (!evalConstexpr(element->expr, program, &value)) {
+					return false;
+				}
+			}
+		}
+	}
+	return true;
+}
+
 bool
 executeSemanticAnalysis(CompilerState *compilerState) {
 	logDebugging(_logger, "Analyzing semantics...");
@@ -1184,6 +1209,10 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 	}
 	if (!_checkConstexprCalls(program)) {
 		logError(_logger, "A constexpr context can only call constexpr functions.");
+		return false;
+	}
+	if (!_checkConstexprEvaluable(program)) {
+		logError(_logger, "A constexpr declaration must evaluate to a compile-time constant.");
 		return false;
 	}
 	if (!_checkLoopBounds(program)) {

@@ -1,0 +1,9 @@
+constexpr int32_t g() {
+    int32_t a[2] = {1, 2};
+    a[0]++;
+    return a[0];
+}
+constexpr int32_t X = g();
+int32_t top(int32_t p) {
+    return p + X;
+}

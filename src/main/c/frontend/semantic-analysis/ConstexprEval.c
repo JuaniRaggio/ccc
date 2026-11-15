@@ -201,20 +201,24 @@ _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 	}
 	case EXPR_ASSIGN: {
 		int64_t value = _eval(expr->assign.value, program, env, ok);
-		if (expr->assign.target->kind == EXPR_IDENTIFIER) {
-			int64_t current = 0;
-			if (expr->assign.op != ASSIGN_PLAIN) {
-				_envGet(env, expr->assign.target->name, &current);
-			}
-			if (expr->assign.op == ASSIGN_ADD) {
-				value = current + value;
-			} else if (expr->assign.op == ASSIGN_SUB) {
-				value = current - value;
-			} else if (expr->assign.op == ASSIGN_MUL) {
-				value = current * value;
-			}
-			_envSet(env, expr->assign.target->name, value);
+		/* Only assignment to a scalar variable can be folded; an array element target is
+		 * not representable in the scalar environment. */
+		if (expr->assign.target->kind != EXPR_IDENTIFIER) {
+			*ok = false;
+			return 0;
 		}
+		int64_t current = 0;
+		if (expr->assign.op != ASSIGN_PLAIN) {
+			_envGet(env, expr->assign.target->name, &current);
+		}
+		if (expr->assign.op == ASSIGN_ADD) {
+			value = current + value;
+		} else if (expr->assign.op == ASSIGN_SUB) {
+			value = current - value;
+		} else if (expr->assign.op == ASSIGN_MUL) {
+			value = current * value;
+		}
+		_envSet(env, expr->assign.target->name, value);
 		return value;
 	}
 	case EXPR_ARRAY_ACCESS:
@@ -244,6 +248,12 @@ _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 	}
 	case EXPR_POST_INC:
 	case EXPR_POST_DEC: {
+		/* Only a scalar variable can be folded; an array element (a[i]++) is not an
+		 * identifier, so reading postOp->name would misread the union. */
+		if (expr->postOp->kind != EXPR_IDENTIFIER) {
+			*ok = false;
+			return 0;
+		}
 		int64_t current = 0;
 		_envGet(env, expr->postOp->name, &current);
 		_envSet(env, expr->postOp->name, current + (expr->kind == EXPR_POST_INC ? 1 : -1));
