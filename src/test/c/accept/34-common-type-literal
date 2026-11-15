@@ -1,0 +1,5 @@
+uint32_t f(uint32_t b) {
+    uint32_t r;
+    r = 1 + b;
+    return r;
+}

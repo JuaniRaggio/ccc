@@ -499,6 +499,24 @@ _mixedSignedness(Expr *left, TypeKind lt, Expr *right, TypeKind rt, Program *pro
 	return true;
 }
 
+/* The type of an arithmetic result is the common type: an adapting constant takes the
+ * other operand's type, otherwise the wider operand wins. Returning the left operand's
+ * type unconditionally would both over-reject (`1 + b`) and silently narrow
+ * (`int8 + int32` assigned to int8). Operands share signedness (mixing is rejected). */
+static TypeKind
+_commonArithmeticType(Expr *left, TypeKind lt, Expr *right, TypeKind rt, Program *program) {
+	int64_t value;
+	bool leftAdapts = evalConstexpr(left, program, &value) && valueFitsType(value, rt);
+	bool rightAdapts = evalConstexpr(right, program, &value) && valueFitsType(value, lt);
+	if (leftAdapts && !rightAdapts) {
+		return rt;
+	}
+	if (rightAdapts && !leftAdapts) {
+		return lt;
+	}
+	return typeWidth(lt) >= typeWidth(rt) ? lt : rt;
+}
+
 static TypeKind
 _inferType(Expr *expr, Scope *scope, Program *program, bool *ok) {
 	if (expr == NULL) {
@@ -535,7 +553,7 @@ _inferType(Expr *expr, Scope *scope, Program *program, bool *ok) {
 				logError(_logger, "Mixing signed and unsigned operands requires an explicit cast.");
 				*ok = false;
 			}
-			return left;
+			return _commonArithmeticType(expr->binary.left, left, expr->binary.right, right, program);
 		case BINOP_LSHIFT:
 		case BINOP_RSHIFT: {
 			if (_category(left) != CAT_INTEGER || _category(right) != CAT_INTEGER) {
@@ -1290,6 +1308,36 @@ _checkSingleDriver(Program *program) {
 	return true;
 }
 
+/* A reference read and written in a combinational function becomes an inout port driven
+ * by always_comb that reads its own output: a combinational loop (unsynthesizable). Such
+ * a read-modify needs a register, i.e. a __sequential function. */
+static bool
+_checkCombinationalRefs(Program *program) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (decl->kind != DECL_FUNCTION || decl->func.sequential) {
+			continue;
+		}
+		NameSet reads = { 0 };
+		NameSet writes = { 0 };
+		collectStmtAccesses(decl->func.body, program, &reads, &writes);
+		bool violation = false;
+		for (ParamList *param = decl->func.params; param != NULL; param = param->next) {
+			if (param->param->kind == PARAM_REF && nameSetContains(&reads, param->param->name)
+			    && nameSetContains(&writes, param->param->name)) {
+				violation = true;
+				break;
+			}
+		}
+		nameSetFree(&reads);
+		nameSetFree(&writes);
+		if (violation) {
+			return false;
+		}
+	}
+	return true;
+}
+
 bool
 executeSemanticAnalysis(CompilerState *compilerState) {
 	logDebugging(_logger, "Analyzing semantics...");
@@ -1342,6 +1390,10 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 	}
 	if (!_checkSingleDriver(program)) {
 		logError(_logger, "A signal cannot be driven by both an assignment and a call, or by two calls.");
+		return false;
+	}
+	if (!_checkCombinationalRefs(program)) {
+		logError(_logger, "A read-write reference requires a __sequential function (it forms a combinational loop).");
 		return false;
 	}
 	logDebugging(_logger, "Semantic analysis succeeded.");

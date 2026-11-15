@@ -623,7 +623,7 @@ _emitSequentialModule(Decl *function, bool importPackage) {
 
 	bool hasReturn = function->func.returnType != TYPE_VOID;
 	for (ParamList *paramNode = function->func.params; paramNode != NULL; paramNode = paramNode->next) {
-		const char *direction = paramNode->param->kind == PARAM_REF
+		const char *direction = (paramNode->param->kind == PARAM_REF || paramNode->param->kind == PARAM_ARRAY)
 		                            ? _refDirection(function->func.body, paramNode->param->name)
 		                            : "input ";
 		_emitPort(paramNode->param, direction, !hasReturn && paramNode->next == NULL);
@@ -721,7 +721,7 @@ _emitModule(Decl *function, bool importPackage) {
 
 	bool hasReturn = function->func.returnType != TYPE_VOID;
 	for (ParamList *paramNode = function->func.params; paramNode != NULL; paramNode = paramNode->next) {
-		const char *direction = paramNode->param->kind == PARAM_REF
+		const char *direction = (paramNode->param->kind == PARAM_REF || paramNode->param->kind == PARAM_ARRAY)
 		                            ? _refDirection(function->func.body, paramNode->param->name)
 		                            : "input ";
 		_emitPort(paramNode->param, direction, !hasReturn && paramNode->next == NULL);
