@@ -71,10 +71,11 @@ flowchart LR
 
 ## Estrategia de pruebas
 
-Dos capas:
+Tres capas:
 
 1. **Frontend: aceptación/rechazo por código de salida** (`src/main/bash/test.sh`). Cada programa en `src/test/c/accept/` debe salir con código `0`; cada uno en `src/test/c/reject/` debe salir con código distinto de `0`.
-2. **Backend: lint y simulación del SystemVerilog generado**. `src/main/bash/test-backend.sh` corre el compilador sobre cada programa de `accept/` y lintea su salida con Verilator. `src/main/bash/verilog.sh` lintea (Verilator) y simula (Icarus, si hay testbench) los módulos de `doc/examples`. Ambos requieren Verilator (incluido en la imagen Docker).
+2. **Backend: lint del SystemVerilog generado** (`src/main/bash/test-backend.sh`). Corre el compilador sobre cada programa de `accept/` y lintea su salida con Verilator.
+3. **Backend: simulación funcional del SystemVerilog generado** (`src/main/bash/test-sim.sh`). Para cada `src/test/sv/<nombre>_tb.sv`, genera el módulo desde `src/test/c/accept/<nombre>` y lo simula con Icarus contra su testbench; el testbench maneja el handshake y verifica el resultado (imprime `PASS`). Cubre lo que el lint no ve: que el módulo _compute bien_. `src/main/bash/verilog.sh` hace lo mismo sobre los módulos de referencia de `doc/examples`. Requieren Verilator/Icarus (incluidos en la imagen Docker).
 
 Opciones consideradas para la capa de frontend y por qué elegimos la actual:
 
@@ -84,9 +85,9 @@ Opciones consideradas para la capa de frontend y por qué elegimos la actual:
 | Diff contra AST/salida _golden_     | Descartada | Frágil: cualquier cambio de formato rompe los tests; costosa de mantener.                  |
 | Unit tests en C de funciones internas | Descartada | Acopla los tests a la estructura interna y requiere un framework.                         |
 
-El límite del black-box (no distingue "aceptado pero con AST incorrecto") lo cubre la capa de backend, que valida la salida con herramientas estándar (Verilator/Icarus) en vez de un verificador propio.
+El límite del black-box (no distingue "aceptado pero con AST incorrecto") lo cubren las capas de backend, que validan la salida con herramientas estándar (Verilator/Icarus) en vez de un verificador propio.
 
-CI (`.github/workflows/pipeline.yaml`) ejecuta _build_ + `test.sh` en cada push o PR. `test.sh` corre ambas capas (el lint de backend se omite si falta Verilator).
+CI (`.github/workflows/pipeline.yaml`) ejecuta _build_ + `test.sh` en cada push o PR. `test.sh` corre las tres capas (lint y simulación se omiten si faltan Verilator o Icarus).
 
 ## Roadmap
 
