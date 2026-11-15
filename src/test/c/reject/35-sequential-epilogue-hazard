@@ -1,0 +1,10 @@
+__sequential uint32_t g(uint32_t n) {
+    uint32_t acc = 0;
+    uint32_t i = 0;
+    while (i < n) {
+        acc += i;
+        i++;
+    }
+    uint32_t result = acc + 1;
+    return result;
+}

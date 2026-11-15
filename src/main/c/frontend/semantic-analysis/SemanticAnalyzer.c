@@ -477,6 +477,24 @@ _constexprGlobalType(Program *program, const char *name, bool *found) {
 	return TYPE_INT32;
 }
 
+/* The spec requires both operands of a binary op to share signedness; mixing needs an
+ * explicit cast. A constant operand is exempt: it adapts to any integer type that
+ * represents its value (so `uint32_t x + 1` is fine, `int32_t a + uint32_t b` is not). */
+static bool
+_mixedSignedness(Expr *left, TypeKind lt, Expr *right, TypeKind rt, Program *program) {
+	if (_category(lt) != CAT_INTEGER || _category(rt) != CAT_INTEGER || typeSigned(lt) == typeSigned(rt)) {
+		return false;
+	}
+	int64_t value;
+	if (evalConstexpr(left, program, &value) && valueFitsType(value, rt)) {
+		return false;
+	}
+	if (evalConstexpr(right, program, &value) && valueFitsType(value, lt)) {
+		return false;
+	}
+	return true;
+}
+
 static TypeKind
 _inferType(Expr *expr, Scope *scope, Program *program, bool *ok) {
 	if (expr == NULL) {
@@ -506,6 +524,14 @@ _inferType(Expr *expr, Scope *scope, Program *program, bool *ok) {
 		case BINOP_ADD:
 		case BINOP_SUB:
 		case BINOP_MUL:
+			if (_category(left) != CAT_INTEGER || _category(right) != CAT_INTEGER) {
+				logError(_logger, "Arithmetic operator requires integer operands.");
+				*ok = false;
+			} else if (_mixedSignedness(expr->binary.left, left, expr->binary.right, right, program)) {
+				logError(_logger, "Mixing signed and unsigned operands requires an explicit cast.");
+				*ok = false;
+			}
+			return left;
 		case BINOP_LSHIFT:
 		case BINOP_RSHIFT:
 			if (_category(left) != CAT_INTEGER || _category(right) != CAT_INTEGER) {
@@ -520,12 +546,18 @@ _inferType(Expr *expr, Scope *scope, Program *program, bool *ok) {
 			if (_category(left) != CAT_INTEGER || _category(right) != CAT_INTEGER) {
 				logError(_logger, "Relational operator requires integer operands.");
 				*ok = false;
+			} else if (_mixedSignedness(expr->binary.left, left, expr->binary.right, right, program)) {
+				logError(_logger, "Mixing signed and unsigned operands requires an explicit cast.");
+				*ok = false;
 			}
 			return TYPE_BOOL;
 		case BINOP_EQ:
 		case BINOP_NEQ:
 			if (_category(left) != _category(right) || _category(left) == CAT_VOID) {
 				logError(_logger, "Equality operator requires operands of the same non-void category.");
+				*ok = false;
+			} else if (_mixedSignedness(expr->binary.left, left, expr->binary.right, right, program)) {
+				logError(_logger, "Mixing signed and unsigned operands requires an explicit cast.");
 				*ok = false;
 			}
 			return TYPE_BOOL;
@@ -891,6 +923,131 @@ _sequentialBodyIsRepresentable(Stmt *body) {
 	return topLoops == scan.loopCount && topReturns == scan.returnCount;
 }
 
+/* Statements that share a cycle become concurrent nonblocking register updates, so a
+ * read sees the value latched at the previous edge. If a statement reads a variable an
+ * earlier statement in the same cycle wrote (RAW), the FSM miscompiles the sequential
+ * reading. A local declaration becomes a register, so its name is a write. */
+static void
+_addDeclWrite(Stmt *stmt, void *context) {
+	if (stmt->kind == STMT_LOCAL_DECL && (stmt->localDecl.init != NULL || stmt->localDecl.initList != NULL)) {
+		nameSetAdd((NameSet *)context, stmt->localDecl.name);
+	}
+}
+
+static void
+_seqStmtAccesses(Stmt *stmt, NameSet *reads, NameSet *writes) {
+	collectStmtAccesses(stmt, reads, writes);
+	walkStmts(stmt, _addDeclWrite, writes);
+}
+
+static bool
+_cycleGroupHasRAW(Stmt **stmts, int count) {
+	if (count <= 1) {
+		return false;
+	}
+	NameSet *reads = calloc(count, sizeof(NameSet));
+	NameSet *writes = calloc(count, sizeof(NameSet));
+	for (int i = 0; i < count; ++i) {
+		_seqStmtAccesses(stmts[i], &reads[i], &writes[i]);
+	}
+	bool hazard = false;
+	for (int j = 0; j < count && !hazard; ++j) {
+		for (int i = 0; i < j; ++i) {
+			if (nameSetsIntersect(&writes[i], &reads[j])) {
+				hazard = true;
+				break;
+			}
+		}
+	}
+	for (int i = 0; i < count; ++i) {
+		nameSetFree(&reads[i]);
+		nameSetFree(&writes[i]);
+	}
+	free(reads);
+	free(writes);
+	return hazard;
+}
+
+/* Checks each of the FSM's cycle-groups (IDLE init, loop iteration, epilogue) for a
+ * read-after-write that the nonblocking emission would miscompile. */
+static bool
+_sequentialBodyHasHazard(Stmt *body) {
+	Stmt *loop = NULL;
+	int capacity = 0;
+	for (StmtList *node = body->compound; node != NULL; node = node->next) {
+		++capacity;
+		if (loop == NULL && (node->stmt->kind == STMT_FOR || node->stmt->kind == STMT_WHILE)) {
+			loop = node->stmt;
+		}
+	}
+	Stmt *loopBody = NULL;
+	if (loop != NULL) {
+		loopBody = loop->kind == STMT_FOR ? loop->forStmt.body : loop->whileStmt.body;
+		if (loopBody != NULL && loopBody->kind == STMT_COMPOUND) {
+			for (StmtList *node = loopBody->compound; node != NULL; node = node->next) {
+				++capacity;
+			}
+		} else if (loopBody != NULL) {
+			++capacity;
+		}
+	}
+	capacity += 2; /* for-loop init and update */
+
+	Stmt **group = malloc(capacity * sizeof(Stmt *));
+	Stmt updateStmt = { .kind = STMT_EXPR };
+	bool hazard = false;
+
+	/* Group 1 (IDLE): preamble statements plus the for-loop init. With no loop, the whole
+	 * body runs in this single group. */
+	int count = 0;
+	for (StmtList *node = body->compound; node != NULL; node = node->next) {
+		if (node->stmt == loop) {
+			break;
+		}
+		group[count++] = node->stmt;
+	}
+	if (loop != NULL && loop->kind == STMT_FOR && loop->forStmt.init != NULL) {
+		group[count++] = loop->forStmt.init;
+	}
+	hazard = _cycleGroupHasRAW(group, count);
+
+	/* Group 2 (RUN iteration): loop body statements plus the for-loop update. */
+	if (!hazard && loop != NULL) {
+		count = 0;
+		if (loopBody != NULL && loopBody->kind == STMT_COMPOUND) {
+			for (StmtList *node = loopBody->compound; node != NULL; node = node->next) {
+				group[count++] = node->stmt;
+			}
+		} else if (loopBody != NULL) {
+			group[count++] = loopBody;
+		}
+		if (loop->kind == STMT_FOR && loop->forStmt.update != NULL) {
+			updateStmt.exprStmt = loop->forStmt.update;
+			group[count++] = &updateStmt;
+		}
+		hazard = _cycleGroupHasRAW(group, count);
+	}
+
+	/* Group 3 (epilogue): top-level statements after the loop, including the return. */
+	if (!hazard && loop != NULL) {
+		count = 0;
+		bool afterLoop = false;
+		for (StmtList *node = body->compound; node != NULL; node = node->next) {
+			if (node->stmt == loop) {
+				afterLoop = true;
+				continue;
+			}
+			if (afterLoop) {
+				group[count++] = node->stmt;
+			}
+		}
+		hazard = _cycleGroupHasRAW(group, count);
+	}
+
+	free(group);
+	return hazard;
+}
+
 static bool
 _isSequentialFunction(Program *program, const char *name) {
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
@@ -917,7 +1074,6 @@ _seqCallCheck(Expr *expr, void *context) {
 
 static bool
 _checkSequential(Program *program) {
-	SeqCallScope callScope = { .program = program, .violation = false };
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
 		Decl *decl = node->decl;
 		if (!_isFunctionDecl(decl)) {
@@ -925,12 +1081,27 @@ _checkSequential(Program *program) {
 		}
 		/* A sequential module exposes a clk/start/done handshake, not a dataflow port,
 		 * so it cannot be instantiated by the combinational call path. */
+		SeqCallScope callScope = { .program = program, .violation = false };
 		walkStmtExprs(decl->func.body, _seqCallCheck, &callScope);
-		if (decl->kind == DECL_FUNCTION && decl->func.sequential && !_sequentialBodyIsRepresentable(decl->func.body)) {
+		if (callScope.violation) {
+			logError(_logger, "A __sequential function cannot be called; it exposes a start/done handshake.");
+			return false;
+		}
+		if (decl->kind != DECL_FUNCTION || !decl->func.sequential) {
+			continue;
+		}
+		if (!_sequentialBodyIsRepresentable(decl->func.body)) {
+			logError(_logger,
+			         "A __sequential function admits one top-level loop, no nested loops, calls or parallel blocks.");
+			return false;
+		}
+		if (_sequentialBodyHasHazard(decl->func.body)) {
+			logError(_logger, "A __sequential cycle cannot read a value written earlier in the same cycle; split "
+			                  "the dependency across iterations.");
 			return false;
 		}
 	}
-	return !callScope.violation;
+	return true;
 }
 
 bool
@@ -973,9 +1144,6 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 		return false;
 	}
 	if (!_checkSequential(program)) {
-		logError(_logger,
-		         "A __sequential function admits one top-level loop, no nested loops, calls or parallel blocks, "
-		         "and cannot be called.");
 		return false;
 	}
 	logDebugging(_logger, "Semantic analysis succeeded.");

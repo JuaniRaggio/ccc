@@ -13,6 +13,7 @@ typedef struct {
 /* Collects the identifiers read and written by a statement subtree. */
 void collectStmtAccesses(Stmt *stmt, NameSet *reads, NameSet *writes);
 
+void nameSetAdd(NameSet *set, char *name);
 bool nameSetContains(const NameSet *set, const char *name);
 bool nameSetsIntersect(const NameSet *a, const NameSet *b);
 void nameSetFree(NameSet *set);
