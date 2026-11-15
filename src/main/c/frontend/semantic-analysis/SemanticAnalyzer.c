@@ -307,6 +307,7 @@ _checkLoopBounds(Program *program) {
 }
 
 typedef struct {
+	Program *program;
 	bool violation;
 } ParallelScope;
 
@@ -333,7 +334,7 @@ _checkParallelBlock(Stmt *stmt, void *context) {
 	NameSet *writes = calloc(units, sizeof(NameSet));
 	int index = 0;
 	for (StmtList *stmtNode = stmt->parallel; stmtNode != NULL; stmtNode = stmtNode->next) {
-		collectStmtAccesses(stmtNode->stmt, &reads[index], &writes[index]);
+		collectStmtAccesses(stmtNode->stmt, scope->program, &reads[index], &writes[index]);
 		++index;
 	}
 	for (int i = 0; i < units; ++i) {
@@ -353,7 +354,7 @@ _checkParallelBlock(Stmt *stmt, void *context) {
 
 static bool
 _checkParallelDependencies(Program *program) {
-	ParallelScope scope = { .violation = false };
+	ParallelScope scope = { .program = program, .violation = false };
 	for (DeclList *node = program->decls; node != NULL; node = node->next) {
 		if (_isFunctionDecl(node->decl)) {
 			walkStmts(node->decl->func.body, _checkParallelBlock, &scope);
@@ -946,7 +947,8 @@ _addDeclWrite(Stmt *stmt, void *context) {
 
 static void
 _seqStmtAccesses(Stmt *stmt, NameSet *reads, NameSet *writes) {
-	collectStmtAccesses(stmt, reads, writes);
+	/* A sequential body has no calls (rejected earlier), so no call propagation is needed. */
+	collectStmtAccesses(stmt, NULL, reads, writes);
 	walkStmts(stmt, _addDeclWrite, writes);
 }
 

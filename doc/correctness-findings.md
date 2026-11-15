@@ -4,8 +4,6 @@ Bitácora de los problemas de correctness detectados (dos revisiones: un code re
 análisis de un especialista en compiladores/HLS) y cómo se resuelven. Cada hallazgo se verifica
 empíricamente antes y después del fix, con un test de rechazo cuando aplica.
 
-Estado: ✅ resuelto · 🔧 en curso · ⏳ pendiente · ⚪ descartado (falso positivo)
-
 ## Bugs de correctness
 
 | ID | Problema | Sev. | Estado | Resolución | PR |
@@ -18,7 +16,7 @@ Estado: ✅ resuelto · 🔧 en curso · ⏳ pendiente · ⚪ descartado (falso 
 | F6 | Overflow sin guardia: literal > 64 bits (UB) y aritmética `constexpr` en `int64` (UB). | Medio | ✅ | Lexer rechaza literal que no cabe en 64 bits (reject 38); constexpr usa builtins con chequeo de overflow. | #8 |
 | F7 | `for` con step data-dependiente: `for(i=0;i<8;i+=n)` con `n` runtime se aceptaba (trip count dinámico, no sintetizable, ni el lint lo atrapa). | Alto | ✅ | El update también debe ser constante (salvo en `__sequential`). Reject 39. | #9 |
 | F8 | `constexpr` emite SV basura: una función constexpr con `a[0]++` no evalúa y el generador emitía `localparam X = __call-1`. Además, misread de unión en `a[i]++`. | Alto | ✅ | Toda declaración `constexpr` debe evaluar a constante (reject 40); el intérprete falla limpio en lvalues no escalares. | #10 |
-| F9 | Dirección de puerto incorrecta: una referencia escrita sólo vía una llamada anidada se emite como `input` en vez de `output`. | Alto | 🔧 | Propagar la escritura a través del parámetro por referencia del callee. | — |
+| F9 | Dirección de puerto incorrecta: una referencia escrita sólo vía una llamada anidada se emite como `input` en vez de `output`. | Alto | ✅ | `AccessSets` atribuye un argumento por referencia según lo que el callee lee/escribe del parámetro. Accept 32 (`output`, lint-clean). | #11 |
 
 ## Descartados (verificados, no eran bugs)
 

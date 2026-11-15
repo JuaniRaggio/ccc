@@ -44,8 +44,77 @@ nameSetFree(NameSet *set) {
 	set->capacity = 0;
 }
 
+static void _collectExpr(Expr *expr, Program *program, NameSet *reads, NameSet *writes, bool propagate);
+static void _collectStmt(Stmt *stmt, Program *program, NameSet *reads, NameSet *writes, bool propagate);
+
+static Decl *
+_findFunction(Program *program, const char *name) {
+	if (program == NULL) {
+		return NULL;
+	}
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		if (node->decl->kind == DECL_FUNCTION && strcmp(node->decl->func.name, name) == 0) {
+			return node->decl;
+		}
+	}
+	return NULL;
+}
+
+/* The base identifier of an lvalue argument (the only thing passable by reference). */
+static char *
+_lvalueBase(Expr *expr) {
+	if (expr->kind == EXPR_IDENTIFIER) {
+		return expr->name;
+	}
+	if (expr->kind == EXPR_ARRAY_ACCESS && expr->arrayAccess.array->kind == EXPR_IDENTIFIER) {
+		return expr->arrayAccess.array->name;
+	}
+	return NULL;
+}
+
+/* Whether the callee reads/writes a given parameter in its own body (direct, one level:
+ * the scan does not propagate through the callee's own calls, which avoids recursion). */
 static void
-_collectExpr(Expr *expr, NameSet *reads, NameSet *writes) {
+_calleeParamDirection(Decl *callee, const char *param, bool *read, bool *written) {
+	NameSet reads = { 0 };
+	NameSet writes = { 0 };
+	_collectStmt(callee->func.body, NULL, &reads, &writes, false);
+	*read = nameSetContains(&reads, param);
+	*written = nameSetContains(&writes, param);
+	nameSetFree(&reads);
+	nameSetFree(&writes);
+}
+
+static void
+_collectCall(Expr *expr, Program *program, NameSet *reads, NameSet *writes, bool propagate) {
+	Decl *callee = propagate ? _findFunction(program, expr->call.name) : NULL;
+	ParamList *param = callee != NULL ? callee->func.params : NULL;
+	for (ExprList *argNode = expr->call.args; argNode != NULL; argNode = argNode->next) {
+		char *base = (param != NULL && param->param->kind == PARAM_REF) ? _lvalueBase(argNode->expr) : NULL;
+		if (base != NULL) {
+			/* A reference argument is read/written exactly as the callee uses the param. */
+			bool read, written;
+			_calleeParamDirection(callee, param->param->name, &read, &written);
+			if (read) {
+				_add(reads, base);
+			}
+			if (written) {
+				_add(writes, base);
+			}
+			if (argNode->expr->kind == EXPR_ARRAY_ACCESS) {
+				_collectExpr(argNode->expr->arrayAccess.index, program, reads, writes, propagate);
+			}
+		} else {
+			_collectExpr(argNode->expr, program, reads, writes, propagate);
+		}
+		if (param != NULL) {
+			param = param->next;
+		}
+	}
+}
+
+static void
+_collectExpr(Expr *expr, Program *program, NameSet *reads, NameSet *writes, bool propagate) {
 	if (expr == NULL) {
 		return;
 	}
@@ -66,11 +135,11 @@ _collectExpr(Expr *expr, NameSet *reads, NameSet *writes) {
 			if (compound) {
 				_add(reads, target->arrayAccess.array->name);
 			}
-			_collectExpr(target->arrayAccess.index, reads, writes);
+			_collectExpr(target->arrayAccess.index, program, reads, writes, propagate);
 		} else {
-			_collectExpr(target, reads, writes);
+			_collectExpr(target, program, reads, writes, propagate);
 		}
-		_collectExpr(expr->assign.value, reads, writes);
+		_collectExpr(expr->assign.value, program, reads, writes, propagate);
 		break;
 	}
 	case EXPR_POST_INC:
@@ -79,31 +148,29 @@ _collectExpr(Expr *expr, NameSet *reads, NameSet *writes) {
 			_add(reads, expr->postOp->name);
 			_add(writes, expr->postOp->name);
 		} else {
-			_collectExpr(expr->postOp, reads, writes);
+			_collectExpr(expr->postOp, program, reads, writes, propagate);
 		}
 		break;
 	case EXPR_BINARY:
-		_collectExpr(expr->binary.left, reads, writes);
-		_collectExpr(expr->binary.right, reads, writes);
+		_collectExpr(expr->binary.left, program, reads, writes, propagate);
+		_collectExpr(expr->binary.right, program, reads, writes, propagate);
 		break;
 	case EXPR_UNARY:
-		_collectExpr(expr->unary.operand, reads, writes);
+		_collectExpr(expr->unary.operand, program, reads, writes, propagate);
 		break;
 	case EXPR_CAST:
-		_collectExpr(expr->cast.operand, reads, writes);
+		_collectExpr(expr->cast.operand, program, reads, writes, propagate);
 		break;
 	case EXPR_ARRAY_ACCESS:
-		_collectExpr(expr->arrayAccess.array, reads, writes);
-		_collectExpr(expr->arrayAccess.index, reads, writes);
+		_collectExpr(expr->arrayAccess.array, program, reads, writes, propagate);
+		_collectExpr(expr->arrayAccess.index, program, reads, writes, propagate);
 		break;
 	case EXPR_CALL:
-		for (ExprList *argNode = expr->call.args; argNode != NULL; argNode = argNode->next) {
-			_collectExpr(argNode->expr, reads, writes);
-		}
+		_collectCall(expr, program, reads, writes, propagate);
 		break;
 	case EXPR_INTRINSIC:
 		for (ExprList *argNode = expr->intrinsic.args; argNode != NULL; argNode = argNode->next) {
-			_collectExpr(argNode->expr, reads, writes);
+			_collectExpr(argNode->expr, program, reads, writes, propagate);
 		}
 		break;
 	default:
@@ -111,49 +178,54 @@ _collectExpr(Expr *expr, NameSet *reads, NameSet *writes) {
 	}
 }
 
-void
-collectStmtAccesses(Stmt *stmt, NameSet *reads, NameSet *writes) {
+static void
+_collectStmt(Stmt *stmt, Program *program, NameSet *reads, NameSet *writes, bool propagate) {
 	if (stmt == NULL) {
 		return;
 	}
 	switch (stmt->kind) {
 	case STMT_EXPR:
-		_collectExpr(stmt->exprStmt, reads, writes);
+		_collectExpr(stmt->exprStmt, program, reads, writes, propagate);
 		break;
 	case STMT_LOCAL_DECL:
-		_collectExpr(stmt->localDecl.arraySize, reads, writes);
-		_collectExpr(stmt->localDecl.init, reads, writes);
+		_collectExpr(stmt->localDecl.arraySize, program, reads, writes, propagate);
+		_collectExpr(stmt->localDecl.init, program, reads, writes, propagate);
 		for (ExprList *initNode = stmt->localDecl.initList; initNode != NULL; initNode = initNode->next) {
-			_collectExpr(initNode->expr, reads, writes);
+			_collectExpr(initNode->expr, program, reads, writes, propagate);
 		}
 		break;
 	case STMT_IF:
-		_collectExpr(stmt->ifStmt.condition, reads, writes);
-		collectStmtAccesses(stmt->ifStmt.thenBranch, reads, writes);
-		collectStmtAccesses(stmt->ifStmt.elseBranch, reads, writes);
+		_collectExpr(stmt->ifStmt.condition, program, reads, writes, propagate);
+		_collectStmt(stmt->ifStmt.thenBranch, program, reads, writes, propagate);
+		_collectStmt(stmt->ifStmt.elseBranch, program, reads, writes, propagate);
 		break;
 	case STMT_FOR:
-		collectStmtAccesses(stmt->forStmt.init, reads, writes);
-		_collectExpr(stmt->forStmt.condition, reads, writes);
-		_collectExpr(stmt->forStmt.update, reads, writes);
-		collectStmtAccesses(stmt->forStmt.body, reads, writes);
+		_collectStmt(stmt->forStmt.init, program, reads, writes, propagate);
+		_collectExpr(stmt->forStmt.condition, program, reads, writes, propagate);
+		_collectExpr(stmt->forStmt.update, program, reads, writes, propagate);
+		_collectStmt(stmt->forStmt.body, program, reads, writes, propagate);
 		break;
 	case STMT_WHILE:
-		_collectExpr(stmt->whileStmt.condition, reads, writes);
-		collectStmtAccesses(stmt->whileStmt.body, reads, writes);
+		_collectExpr(stmt->whileStmt.condition, program, reads, writes, propagate);
+		_collectStmt(stmt->whileStmt.body, program, reads, writes, propagate);
 		break;
 	case STMT_RETURN:
-		_collectExpr(stmt->returnExpr, reads, writes);
+		_collectExpr(stmt->returnExpr, program, reads, writes, propagate);
 		break;
 	case STMT_COMPOUND:
 		for (StmtList *stmtNode = stmt->compound; stmtNode != NULL; stmtNode = stmtNode->next) {
-			collectStmtAccesses(stmtNode->stmt, reads, writes);
+			_collectStmt(stmtNode->stmt, program, reads, writes, propagate);
 		}
 		break;
 	case STMT_PARALLEL:
 		for (StmtList *stmtNode = stmt->parallel; stmtNode != NULL; stmtNode = stmtNode->next) {
-			collectStmtAccesses(stmtNode->stmt, reads, writes);
+			_collectStmt(stmtNode->stmt, program, reads, writes, propagate);
 		}
 		break;
 	}
+}
+
+void
+collectStmtAccesses(Stmt *stmt, Program *program, NameSet *reads, NameSet *writes) {
+	_collectStmt(stmt, program, reads, writes, true);
 }

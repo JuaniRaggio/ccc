@@ -412,7 +412,7 @@ static const char *
 _refDirection(Stmt *body, const char *name) {
 	NameSet reads = { 0 };
 	NameSet writes = { 0 };
-	collectStmtAccesses(body, &reads, &writes);
+	collectStmtAccesses(body, _program, &reads, &writes);
 	bool read = nameSetContains(&reads, name);
 	bool written = nameSetContains(&writes, name);
 	nameSetFree(&reads);
