@@ -1182,6 +1182,42 @@ _checkConstexprEvaluable(Program *program) {
 	return true;
 }
 
+/* In a combinational module a name assigned procedurally (always_comb) must not also be
+ * driven by a call's reference output (a module instance), nor driven by two instances;
+ * otherwise the signal has multiple drivers. */
+static bool
+_checkSingleDriver(Program *program) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (decl->kind != DECL_FUNCTION || decl->func.sequential) {
+			continue;
+		}
+		NameSet reads = { 0 };
+		NameSet procedural = { 0 };
+		NameSet driven = { 0 };
+		collectStmtAccesses(decl->func.body, NULL, &reads, &procedural);
+		walkStmts(decl->func.body, _addDeclWrite, &procedural);
+		collectCallRefWrites(decl->func.body, program, &driven);
+
+		bool conflict = nameSetsIntersect(&driven, &procedural);
+		for (int i = 0; i < driven.count && !conflict; ++i) {
+			for (int j = i + 1; j < driven.count; ++j) {
+				if (strcmp(driven.names[i], driven.names[j]) == 0) {
+					conflict = true;
+					break;
+				}
+			}
+		}
+		nameSetFree(&reads);
+		nameSetFree(&procedural);
+		nameSetFree(&driven);
+		if (conflict) {
+			return false;
+		}
+	}
+	return true;
+}
+
 bool
 executeSemanticAnalysis(CompilerState *compilerState) {
 	logDebugging(_logger, "Analyzing semantics...");
@@ -1230,6 +1266,10 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 		return false;
 	}
 	if (!_checkSequential(program)) {
+		return false;
+	}
+	if (!_checkSingleDriver(program)) {
+		logError(_logger, "A signal cannot be driven by both an assignment and a call, or by two calls.");
 		return false;
 	}
 	logDebugging(_logger, "Semantic analysis succeeded.");

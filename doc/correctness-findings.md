@@ -17,6 +17,7 @@ empíricamente antes y después del fix, con un test de rechazo cuando aplica.
 | F7 | `for` con step data-dependiente: `for(i=0;i<8;i+=n)` con `n` runtime se aceptaba (trip count dinámico, no sintetizable, ni el lint lo atrapa). | Alto | ✅ | El update también debe ser constante (salvo en `__sequential`). Reject 39. | #9 |
 | F8 | `constexpr` emite SV basura: una función constexpr con `a[0]++` no evalúa y el generador emitía `localparam X = __call-1`. Además, misread de unión en `a[i]++`. | Alto | ✅ | Toda declaración `constexpr` debe evaluar a constante (reject 40); el intérprete falla limpio en lvalues no escalares. | #10 |
 | F9 | Dirección de puerto incorrecta: una referencia escrita sólo vía una llamada anidada se emite como `input` en vez de `output`. | Alto | ✅ | `AccessSets` atribuye un argumento por referencia según lo que el callee lee/escribe del parámetro. Accept 32 (`output`, lint-clean). | #11 |
+| F10 | Señal multi-driver: un local manejado a la vez por una asignación `always_comb` y por la instancia de una llamada (ref) se aceptaba (lo atrapaba sólo el lint). | Medio | ✅ | Chequeo de driver único en el frontend: un nombre no puede ser escrito por asignación y por un call (ref), ni por dos calls. Reject 41. | #12 |
 
 ## Descartados (verificados, no eran bugs)
 
