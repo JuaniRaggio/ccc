@@ -533,12 +533,19 @@ _inferType(Expr *expr, Scope *scope, Program *program, bool *ok) {
 			}
 			return left;
 		case BINOP_LSHIFT:
-		case BINOP_RSHIFT:
+		case BINOP_RSHIFT: {
 			if (_category(left) != CAT_INTEGER || _category(right) != CAT_INTEGER) {
 				logError(_logger, "Arithmetic operator requires integer operands.");
 				*ok = false;
+				return left;
+			}
+			int64_t count;
+			if (evalConstexpr(expr->binary.right, program, &count) && (count < 0 || count >= typeWidth(left))) {
+				logError(_logger, "Shift count must be non-negative and less than the operand width.");
+				*ok = false;
 			}
 			return left;
+		}
 		case BINOP_LT:
 		case BINOP_GT:
 		case BINOP_LE:
@@ -1104,6 +1111,47 @@ _checkSequential(Program *program) {
 	return true;
 }
 
+/* A non-void function becomes combinational logic (or an FSM) driving `out`; if some
+ * path leaves `out` unassigned, synthesis infers a latch. A path definitely returns
+ * when it ends in `return expr`, or in an if/else whose both branches do, or in a block
+ * containing such a statement. Loops do not count: their body may never execute. */
+static bool
+_definitelyReturns(Stmt *stmt) {
+	if (stmt == NULL) {
+		return false;
+	}
+	switch (stmt->kind) {
+	case STMT_RETURN:
+		return stmt->returnExpr != NULL;
+	case STMT_IF:
+		return stmt->ifStmt.elseBranch != NULL && _definitelyReturns(stmt->ifStmt.thenBranch)
+		       && _definitelyReturns(stmt->ifStmt.elseBranch);
+	case STMT_COMPOUND:
+		for (StmtList *node = stmt->compound; node != NULL; node = node->next) {
+			if (_definitelyReturns(node->stmt)) {
+				return true;
+			}
+		}
+		return false;
+	default:
+		return false;
+	}
+}
+
+static bool
+_checkReturns(Program *program) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (decl->kind != DECL_FUNCTION || decl->func.returnType == TYPE_VOID) {
+			continue;
+		}
+		if (!_definitelyReturns(decl->func.body)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 bool
 executeSemanticAnalysis(CompilerState *compilerState) {
 	logDebugging(_logger, "Analyzing semantics...");
@@ -1113,6 +1161,10 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 	}
 	if (!_checkTypes(program)) {
 		logError(_logger, "The program has name-resolution or type errors.");
+		return false;
+	}
+	if (!_checkReturns(program)) {
+		logError(_logger, "A non-void function must return a value on every path.");
 		return false;
 	}
 	if (!_checkNoRecursion(program)) {

@@ -78,13 +78,26 @@ static int64_t
 _evalBinary(Expr *expr, Program *program, Env *env, bool *ok) {
 	int64_t left = _eval(expr->binary.left, program, env, ok);
 	int64_t right = _eval(expr->binary.right, program, env, ok);
+	int64_t result;
 	switch (expr->binary.op) {
 	case BINOP_ADD:
-		return left + right;
+		if (__builtin_add_overflow(left, right, &result)) {
+			*ok = false;
+			return 0;
+		}
+		return result;
 	case BINOP_SUB:
-		return left - right;
+		if (__builtin_sub_overflow(left, right, &result)) {
+			*ok = false;
+			return 0;
+		}
+		return result;
 	case BINOP_MUL:
-		return left * right;
+		if (__builtin_mul_overflow(left, right, &result)) {
+			*ok = false;
+			return 0;
+		}
+		return result;
 	case BINOP_LSHIFT:
 		if (right < 0 || right >= FOLD_BITS) {
 			*ok = false;
