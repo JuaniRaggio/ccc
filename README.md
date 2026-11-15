@@ -95,7 +95,7 @@ Las decisiones de diseño ya tomadas están en [`doc/language-reference.typ`](do
 
 | Prioridad | Tarea |
 | :-------- | :---- |
-| Largo     | FSM secuencial multi-bucle: bucles anidados y llamadas a función dentro de `__sequential` (requiere scheduling HLS por estado). |
+| Largo     | Llamadas a función dentro de `__sequential` (sub-FSM con handshake). Los bucles múltiples y anidados ya se soportan. |
 | Largo     | Handshake `ready`/`valid` con backpressure, alternativa a `start`/`done`. |
 
 ## SystemVerilog

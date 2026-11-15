@@ -968,25 +968,60 @@ _seqScanStmt(Stmt *stmt, void *context) {
 	}
 }
 
+/* A loop must not sit inside an if (the FSM schedules an if combinationally, within one
+ * cycle, so it cannot contain a multi-cycle loop). A return must sit at the function's top
+ * level, never inside a loop or an if. Loops may be multiple and nested. */
+static bool
+_seqPlacementOk(Stmt *stmt, bool inIf, bool inLoop) {
+	if (stmt == NULL) {
+		return true;
+	}
+	switch (stmt->kind) {
+	case STMT_FOR:
+		return !inIf && _seqPlacementOk(stmt->forStmt.body, false, true);
+	case STMT_WHILE:
+		return !inIf && _seqPlacementOk(stmt->whileStmt.body, false, true);
+	case STMT_IF:
+		return _seqPlacementOk(stmt->ifStmt.thenBranch, true, inLoop)
+		       && _seqPlacementOk(stmt->ifStmt.elseBranch, true, inLoop);
+	case STMT_RETURN:
+		return !inIf && !inLoop;
+	case STMT_COMPOUND:
+		for (StmtList *node = stmt->compound; node != NULL; node = node->next) {
+			if (!_seqPlacementOk(node->stmt, inIf, inLoop)) {
+				return false;
+			}
+		}
+		return true;
+	default:
+		return true;
+	}
+}
+
 static bool
 _sequentialBodyIsRepresentable(Stmt *body) {
 	SeqScan scan = { 0 };
 	walkStmts(body, _seqScanStmt, &scan);
 	walkStmtExprs(body, _seqScanExpr, &scan);
-	if (scan.hasCall || scan.hasParallel || scan.loopCount > 1) {
+	if (scan.hasCall || scan.hasParallel) {
 		return false;
 	}
-	int topLoops = 0;
+	if (!_seqPlacementOk(body, false, false)) {
+		return false;
+	}
+	/* A return, if present, must be the single last top-level statement. */
 	int topReturns = 0;
+	Stmt *last = NULL;
 	for (StmtList *node = body->compound; node != NULL; node = node->next) {
-		if (node->stmt->kind == STMT_FOR || node->stmt->kind == STMT_WHILE) {
-			++topLoops;
-		} else if (node->stmt->kind == STMT_RETURN) {
+		if (node->stmt->kind == STMT_RETURN) {
 			++topReturns;
 		}
+		last = node->stmt;
 	}
-	/* Every loop and return must sit at the top level of the body. */
-	return topLoops == scan.loopCount && topReturns == scan.returnCount;
+	if (topReturns > 1 || (topReturns == 1 && (last == NULL || last->kind != STMT_RETURN))) {
+		return false;
+	}
+	return true;
 }
 
 /* Statements that share a cycle become concurrent nonblocking register updates, so a
@@ -1035,84 +1070,62 @@ _cycleGroupHasRAW(Stmt **stmts, int count) {
 	return hazard;
 }
 
-/* Checks each of the FSM's cycle-groups (IDLE init, loop iteration, epilogue) for a
- * read-after-write that the nonblocking emission would miscompile. */
+static bool _seqRegionHasHazard(StmtList *stmts);
+
 static bool
-_sequentialBodyHasHazard(Stmt *body) {
-	Stmt *loop = NULL;
-	int capacity = 0;
-	for (StmtList *node = body->compound; node != NULL; node = node->next) {
-		++capacity;
-		if (loop == NULL && (node->stmt->kind == STMT_FOR || node->stmt->kind == STMT_WHILE)) {
-			loop = node->stmt;
-		}
+_seqRegionStmtHasHazard(Stmt *body) {
+	if (body == NULL) {
+		return false;
 	}
-	Stmt *loopBody = NULL;
-	if (loop != NULL) {
-		loopBody = loop->kind == STMT_FOR ? loop->forStmt.body : loop->whileStmt.body;
-		if (loopBody != NULL && loopBody->kind == STMT_COMPOUND) {
-			for (StmtList *node = loopBody->compound; node != NULL; node = node->next) {
-				++capacity;
-			}
-		} else if (loopBody != NULL) {
-			++capacity;
-		}
+	if (body->kind == STMT_COMPOUND) {
+		return _seqRegionHasHazard(body->compound);
 	}
-	capacity += 2; /* for-loop init and update */
+	StmtList single = { .stmt = body, .next = NULL };
+	return _seqRegionHasHazard(&single);
+}
 
-	Stmt **group = malloc(capacity * sizeof(Stmt *));
-	Stmt updateStmt = { .kind = STMT_EXPR };
-	bool hazard = false;
-
-	/* Group 1 (IDLE): preamble statements plus the for-loop init. With no loop, the whole
-	 * body runs in this single group. */
+/* Each maximal run of non-loop statements in a region shares one FSM cycle; check RAW
+ * within it and recurse into loop bodies. The for-init and for-update land in their own
+ * states (one statement each, no intra-cycle RAW), so they are not grouped here. */
+static bool
+_seqRegionHasHazard(StmtList *stmts) {
 	int count = 0;
-	for (StmtList *node = body->compound; node != NULL; node = node->next) {
-		if (node->stmt == loop) {
-			break;
-		}
-		group[count++] = node->stmt;
+	for (StmtList *node = stmts; node != NULL; node = node->next) {
+		++count;
 	}
-	if (loop != NULL && loop->kind == STMT_FOR && loop->forStmt.init != NULL) {
-		group[count++] = loop->forStmt.init;
+	if (count == 0) {
+		return false;
 	}
-	hazard = _cycleGroupHasRAW(group, count);
-
-	/* Group 2 (RUN iteration): loop body statements plus the for-loop update. */
-	if (!hazard && loop != NULL) {
-		count = 0;
-		if (loopBody != NULL && loopBody->kind == STMT_COMPOUND) {
-			for (StmtList *node = loopBody->compound; node != NULL; node = node->next) {
-				group[count++] = node->stmt;
+	Stmt **items = malloc(count * sizeof(Stmt *));
+	int index = 0;
+	for (StmtList *node = stmts; node != NULL; node = node->next) {
+		items[index++] = node->stmt;
+	}
+	Stmt **group = malloc(count * sizeof(Stmt *));
+	bool hazard = false;
+	int i = 0;
+	while (i < count && !hazard) {
+		if (items[i]->kind == STMT_FOR || items[i]->kind == STMT_WHILE) {
+			Stmt *body = items[i]->kind == STMT_FOR ? items[i]->forStmt.body : items[i]->whileStmt.body;
+			hazard = _seqRegionStmtHasHazard(body);
+			++i;
+		} else {
+			int groupCount = 0;
+			while (i < count && items[i]->kind != STMT_FOR && items[i]->kind != STMT_WHILE) {
+				group[groupCount++] = items[i];
+				++i;
 			}
-		} else if (loopBody != NULL) {
-			group[count++] = loopBody;
+			hazard = _cycleGroupHasRAW(group, groupCount);
 		}
-		if (loop->kind == STMT_FOR && loop->forStmt.update != NULL) {
-			updateStmt.exprStmt = loop->forStmt.update;
-			group[count++] = &updateStmt;
-		}
-		hazard = _cycleGroupHasRAW(group, count);
 	}
-
-	/* Group 3 (epilogue): top-level statements after the loop, including the return. */
-	if (!hazard && loop != NULL) {
-		count = 0;
-		bool afterLoop = false;
-		for (StmtList *node = body->compound; node != NULL; node = node->next) {
-			if (node->stmt == loop) {
-				afterLoop = true;
-				continue;
-			}
-			if (afterLoop) {
-				group[count++] = node->stmt;
-			}
-		}
-		hazard = _cycleGroupHasRAW(group, count);
-	}
-
+	free(items);
 	free(group);
 	return hazard;
+}
+
+static bool
+_sequentialBodyHasHazard(Stmt *body) {
+	return _seqRegionHasHazard(body->compound);
 }
 
 static bool

@@ -178,27 +178,28 @@ ciclo son concurrentes, por lo que una lectura ve el valor del flanco anterior. 
 contradiga el orden secuencial del código, se rechaza toda dependencia _read-after-write_ dentro de
 un ciclo (una sentencia que lee lo que otra anterior del mismo ciclo escribió); hay que separarla en
 iteraciones. Los parámetros por valor son entradas que deben mantenerse estables durante la
-ejecución. Limitaciones actuales: un único bucle no anidado y sin llamadas a función en el cuerpo.
+ejecución.
 
-= Trabajo futuro
+El cuerpo admite múltiples bucles secuenciales y bucles anidados: se agenda en una FSM de estados
+numerados (0 = IDLE, 1 = DONE, resto asignados por el _scheduler_), donde cada corrida máxima de
+sentencias simples es un estado (un ciclo) y cada bucle es un estado de chequeo de condición más la
+región de su cuerpo; el `for` se desazucara a init + `while`. El análisis de _hazards_ recorre esas
+regiones y verifica RAW por ciclo. Limitaciones actuales: sin llamadas a función en el cuerpo
+(requiere sub-FSM, ver @sec-futuro); un bucle no puede estar dentro de un `if`; el `return` debe ser
+la última sentencia de nivel superior.
 
-Dos extensiones planificadas, no implementadas. Ninguna es prerrequisito de lo anterior; se
-documentan para fijar su diseño y las decisiones abiertas.
+= Trabajo futuro <sec-futuro>
 
-== FSM secuencial multi-bucle
+Extensiones planificadas, no implementadas. Se documentan para fijar su diseño y las decisiones
+abiertas.
 
-Hoy una función `__sequential` admite un único bucle de nivel superior, sin anidar y sin llamadas.
-Generalizarlo requiere _scheduling_ HLS real en vez de los tres estados fijos
-(`CCC_IDLE`/`CCC_RUN`/`CCC_DONE`):
+== Llamadas dentro de una `__sequential`
 
-- *Bucles anidados*: cada bucle introduce su propio grupo de ciclos y dependencias _loop-carried_
-  que cruzan la frontera interno/externo. El análisis de _hazards_ debe pasar de los tres grupos
-  fijos a un modelo de _dataflow_ por estado.
-- *Llamadas dentro del cuerpo*: la instanciación combinacional actual no sirve; una llamada
-  secuencial necesita encadenar el handshake del _callee_ (su propio `start`/`done`) como una
-  sub-FSM, suspendiendo la FSM llamadora hasta el `done` del _callee_. Además, los globales
-  `_callNodes`/`_callCount` del generador (hoy sólo seteados en el camino combinacional) deben
-  pasarse como parámetro antes de habilitar esto.
+Los bucles múltiples y anidados ya se generan (FSM de estados numerados). Falta soportar llamadas en
+el cuerpo: la instanciación combinacional actual no sirve; una llamada secuencial necesita encadenar
+el handshake del _callee_ (su propio `start`/`done`) como una sub-FSM, suspendiendo la FSM llamadora
+hasta el `done` del _callee_. Además, los globales `_callNodes`/`_callCount` del generador (hoy sólo
+seteados en el camino combinacional) deben pasarse como parámetro antes de habilitar esto.
 
 == Handshake `ready`/`valid`
 

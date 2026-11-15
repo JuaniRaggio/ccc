@@ -1,0 +1,13 @@
+__sequential uint32_t nested(uint32_t n) {
+    uint32_t acc = 0;
+    uint32_t i = 0;
+    while (i < n) {
+        uint32_t j = 0;
+        while (j < n) {
+            acc += 1;
+            j++;
+        }
+        i++;
+    }
+    return acc;
+}
