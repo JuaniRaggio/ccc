@@ -1,0 +1,14 @@
+__sequential uint32_t twoloops(uint32_t n) {
+    uint32_t acc = 0;
+    uint32_t i = 0;
+    while (i < n) {
+        acc += i;
+        i++;
+    }
+    uint32_t j = 0;
+    while (j < n) {
+        acc += j;
+        j++;
+    }
+    return acc;
+}

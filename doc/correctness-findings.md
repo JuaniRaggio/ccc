@@ -164,10 +164,18 @@ inicializar la variable lo evita.
 Dos referencias a elementos con índice constante distinto del mismo arreglo (`a[0]`, `a[1]`) ya no se
 rechazan; el chequeo de aliasing y el de driver único son slice-aware. Accept 33, reject 43.
 
+### FSM secuencial multi-bucle
+
+`__sequential` admite múltiples bucles secuenciales y bucles anidados: emisor de FSM general con
+estados numerados (desazucara `for` a init + `while`, emisión recursiva por regiones) y chequeo de
+hazard RAW recursivo. Restricciones: sin llamadas en el cuerpo, un bucle no puede estar dentro de un
+`if`, y el `return` debe ser la última sentencia top-level. Accept 37 (anidado), 38 (dos bucles),
+ambos simulados con Icarus.
+
 ## Pendiente (features, no bugs)
 
 Documentadas con su diseño y decisiones abiertas en la sección _Trabajo futuro_ de
 `doc/language-reference.typ`; no implementadas.
 
-- FSM secuencial multi-bucle (bucles anidados y llamadas dentro de `__sequential`).
+- Llamadas a función dentro de `__sequential` (sub-FSM con handshake). Los bucles múltiples y anidados ya están implementados.
 - Handshake `ready`/`valid` con backpressure.

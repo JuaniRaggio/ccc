@@ -598,14 +598,116 @@ _emitSeqOrReturn(Stmt *stmt, int indent) {
 	}
 }
 
-static Stmt *
-_findSequentialLoop(Stmt *body) {
-	for (StmtList *node = body->compound; node != NULL; node = node->next) {
-		if (node->stmt->kind == STMT_FOR || node->stmt->kind == STMT_WHILE) {
-			return node->stmt;
+/* Generalized multi-loop FSM. The body is scheduled into numbered states (state 0 = IDLE,
+ * 1 = DONE, 2+ allocated below). A region (statement list) is a chain of segments: a
+ * maximal run of simple statements becomes one state (one clock), and each loop becomes a
+ * condition-check state plus its body region. `for` is desugared to init + while(cond){ body;
+ * update }. Nested loops recurse. States reference each other by id; forward ids are
+ * allocated before the referencing arm is emitted. */
+static int _seqState;
+
+static int
+_seqAlloc(void) {
+	return _seqState++;
+}
+
+static int _emitSeqRegion(StmtList *stmts, int exitId);
+
+static int
+_emitSeqRegionStmt(Stmt *body, int exitId) {
+	if (body == NULL) {
+		return exitId;
+	}
+	if (body->kind == STMT_COMPOUND) {
+		return _emitSeqRegion(body->compound, exitId);
+	}
+	StmtList single = { .stmt = body, .next = NULL };
+	return _emitSeqRegion(&single, exitId);
+}
+
+static int
+_emitSeqLoop(Stmt *loop, int exitId) {
+	bool isFor = loop->kind == STMT_FOR;
+	Expr *cond = isFor ? loop->forStmt.condition : loop->whileStmt.condition;
+	Stmt *body = isFor ? loop->forStmt.body : loop->whileStmt.body;
+	Expr *update = isFor ? loop->forStmt.update : NULL;
+	Stmt *init = isFor ? loop->forStmt.init : NULL;
+
+	int checkId = _seqAlloc();
+	int updateId = update != NULL ? _seqAlloc() : -1;
+	int bodyExit = updateId != -1 ? updateId : checkId;
+	int bodyEntry = _emitSeqRegionStmt(body, bodyExit);
+
+	fprintf(stdout, "        16'd%d: begin\n", checkId);
+	fprintf(stdout, "          if (");
+	_emitExpr(cond);
+	fprintf(stdout, ") ccc_state <= 16'd%d;\n", bodyEntry);
+	fprintf(stdout, "          else ccc_state <= 16'd%d;\n", exitId);
+	fprintf(stdout, "        end\n");
+
+	if (updateId != -1) {
+		fprintf(stdout, "        16'd%d: begin\n", updateId);
+		_emitSeqStep(update, 10);
+		fprintf(stdout, "          ccc_state <= 16'd%d;\n", checkId);
+		fprintf(stdout, "        end\n");
+	}
+
+	if (init != NULL) {
+		int initId = _seqAlloc();
+		fprintf(stdout, "        16'd%d: begin\n", initId);
+		_emitSeqOrReturn(init, 10);
+		fprintf(stdout, "          ccc_state <= 16'd%d;\n", checkId);
+		fprintf(stdout, "        end\n");
+		return initId;
+	}
+	return checkId;
+}
+
+static bool
+_isSeqLoop(Stmt *stmt) {
+	return stmt->kind == STMT_FOR || stmt->kind == STMT_WHILE;
+}
+
+static int
+_emitSeqRegion(StmtList *stmts, int exitId) {
+	int count = 0;
+	for (StmtList *node = stmts; node != NULL; node = node->next) {
+		++count;
+	}
+	if (count == 0) {
+		return exitId;
+	}
+	Stmt **items = malloc(count * sizeof(Stmt *));
+	int index = 0;
+	for (StmtList *node = stmts; node != NULL; node = node->next) {
+		items[index++] = node->stmt;
+	}
+
+	/* Thread right-to-left so each segment transitions to the next one's entry. */
+	int nextEntry = exitId;
+	int i = count - 1;
+	while (i >= 0) {
+		if (_isSeqLoop(items[i])) {
+			nextEntry = _emitSeqLoop(items[i], nextEntry);
+			--i;
+		} else {
+			int start = i;
+			while (start - 1 >= 0 && !_isSeqLoop(items[start - 1])) {
+				--start;
+			}
+			int stateId = _seqAlloc();
+			fprintf(stdout, "        16'd%d: begin\n", stateId);
+			for (int k = start; k <= i; ++k) {
+				_emitSeqOrReturn(items[k], 10);
+			}
+			fprintf(stdout, "          ccc_state <= 16'd%d;\n", nextEntry);
+			fprintf(stdout, "        end\n");
+			nextEntry = stateId;
+			i = start - 1;
 		}
 	}
-	return NULL;
+	free(items);
+	return nextEntry;
 }
 
 static void
@@ -635,75 +737,28 @@ _emitSequentialModule(Decl *function, bool importPackage) {
 	}
 	fprintf(stdout, ");\n");
 
-	fprintf(stdout, "  typedef enum logic [1:0] { CCC_IDLE, CCC_RUN, CCC_DONE } ccc_state_t;\n");
-	fprintf(stdout, "  ccc_state_t ccc_state;\n");
+	fprintf(stdout, "  logic [15:0] ccc_state;\n");
 	walkStmts(function->func.body, _emitLocalDecl, NULL);
-
-	Stmt *loop = _findSequentialLoop(function->func.body);
-	Expr *cond = NULL;
-	Stmt *loopInit = NULL;
-	Expr *loopUpdate = NULL;
-	Stmt *loopBody = NULL;
-	if (loop != NULL && loop->kind == STMT_FOR) {
-		loopInit = loop->forStmt.init;
-		cond = loop->forStmt.condition;
-		loopUpdate = loop->forStmt.update;
-		loopBody = loop->forStmt.body;
-	} else if (loop != NULL) {
-		cond = loop->whileStmt.condition;
-		loopBody = loop->whileStmt.body;
-	}
 
 	fprintf(stdout, "  always_ff @(posedge clk) begin\n");
 	fprintf(stdout, "    if (rst) begin\n");
-	fprintf(stdout, "      ccc_state <= CCC_IDLE;\n");
+	fprintf(stdout, "      ccc_state <= 16'd0;\n");
 	fprintf(stdout, "      done <= 1'b0;\n");
 	fprintf(stdout, "    end else begin\n");
 	fprintf(stdout, "      case (ccc_state)\n");
 
-	fprintf(stdout, "        CCC_IDLE: begin\n");
+	_seqState = 2; /* 0 = IDLE, 1 = DONE */
+	int entry = _emitSeqRegion(function->func.body->compound, 1);
+
+	fprintf(stdout, "        16'd0: begin\n");
 	fprintf(stdout, "          done <= 1'b0;\n");
-	fprintf(stdout, "          if (start) begin\n");
-	for (StmtList *node = function->func.body->compound; node != NULL; node = node->next) {
-		if (node->stmt == loop) {
-			break;
-		}
-		_emitSeqOrReturn(node->stmt, 12);
-	}
-	_emitSeqStmt(loopInit, 12);
-	fprintf(stdout, "            ccc_state <= %s;\n", loop != NULL ? "CCC_RUN" : "CCC_DONE");
-	fprintf(stdout, "          end\n");
+	fprintf(stdout, "          if (start) ccc_state <= 16'd%d;\n", entry);
 	fprintf(stdout, "        end\n");
-
-	if (loop != NULL) {
-		fprintf(stdout, "        CCC_RUN: begin\n");
-		fprintf(stdout, "          if (");
-		_emitExpr(cond);
-		fprintf(stdout, ") begin\n");
-		_emitSeqBranch(loopBody, 12);
-		_emitSeqStep(loopUpdate, 12);
-		fprintf(stdout, "          end else begin\n");
-		bool afterLoop = false;
-		for (StmtList *node = function->func.body->compound; node != NULL; node = node->next) {
-			if (node->stmt == loop) {
-				afterLoop = true;
-				continue;
-			}
-			if (afterLoop) {
-				_emitSeqOrReturn(node->stmt, 12);
-			}
-		}
-		fprintf(stdout, "            ccc_state <= CCC_DONE;\n");
-		fprintf(stdout, "          end\n");
-		fprintf(stdout, "        end\n");
-	}
-
-	fprintf(stdout, "        CCC_DONE: begin\n");
+	fprintf(stdout, "        16'd1: begin\n");
 	fprintf(stdout, "          done <= 1'b1;\n");
-	fprintf(stdout, "          ccc_state <= CCC_IDLE;\n");
+	fprintf(stdout, "          ccc_state <= 16'd0;\n");
 	fprintf(stdout, "        end\n");
-
-	fprintf(stdout, "        default: ccc_state <= CCC_IDLE;\n");
+	fprintf(stdout, "        default: ccc_state <= 16'd0;\n");
 	fprintf(stdout, "      endcase\n");
 	fprintf(stdout, "    end\n");
 	fprintf(stdout, "  end\n");
