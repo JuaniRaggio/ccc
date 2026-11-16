@@ -35,8 +35,11 @@ El análisis semántico recorre el AST completo y rechaza el programa si no se c
 | Solo se indexan arreglos, no escalares ni referencias.     | Flag `isArray` en la tabla de símbolos (las referencias son escalares). |
 | Dentro de `__parallel` no hay dependencias de datos (RAW/WAW/WAR). | Conjuntos de lectura/escritura por sentencia.                  |
 | Una referencia `unique` no aliasa otro argumento en la misma llamada. | Comparación de símbolos de argumentos en el call-site.     |
-
-Pendiente para el Stage III: tabla de símbolos y chequeo de tipos (uso de nombres no declarados, compatibilidad de tipos), y la generación de código.
+| Ningún nombre oculta ni redeclara otro visible; un nombre reusado en scopes hermanos conserva tipo y tamaño (cada nombre es una única señal). | Registro de nombres por función durante el chequeo de tipos. |
+| Ningún parámetro o local usa un nombre que agrega el generador (`out`, `clk`, `rst`, `start`, `done`, `ccc_*`, `<referencia>_in`). | Comparación contra los nombres generados de cada módulo. |
+| Todo `for` tiene condición.                                | Recorrido de los bucles.                                              |
+| Una función combinacional no llama a otra dentro de un bucle (todas las iteraciones compartirían una instancia). | Búsqueda de llamadas en los bucles. |
+| Una `__sequential` no tiene llamadas, `__parallel`, bucles dentro de un `if`, ni bucles o `return` en un bloque `{ }` suelto; el `return` es la última sentencia de nivel superior; no hay RAW dentro de un ciclo. | Recorrido de la forma del cuerpo + RAW por ciclo sobre la segmentación compartida con el generador (`SeqSchedule.c`). |
 
 ## Pasos del compilador
 
@@ -67,7 +70,7 @@ flowchart LR
 
 3. **Análisis semántico** (`frontend/semantic-analysis/SemanticAnalyzer.c`). Una pasada sobre el AST ya completo que valida las reglas estáticas del lenguaje (ver tabla en [Estado](#estado)) y acepta o rechaza. Corre después del parser porque necesita el árbol entero: así puede razonar sobre todo el programa a la vez (por ejemplo, recursión mutua entre funciones declaradas en cualquier orden, imposible de detectar durante el parseo).
 
-4. **Generación de código** (`backend/code-generation/Generator.c`). Recorre el AST ya validado y emite SystemVerilog sintetizable: por defecto combinacional (módulos, puertos, `always_comb`, `__parallel`, `constexpr` como `localparam`, llamadas como instanciación); las funciones `__sequential` se emiten como FSM (`always_ff` con estados `CCC_IDLE`/`CCC_RUN`/`CCC_DONE` y handshake `start`/`done`), una iteración del bucle por ciclo.
+4. **Generación de código** (`backend/code-generation/Generator.c`). Recorre el AST ya validado y emite SystemVerilog sintetizable: por defecto combinacional (módulos, puertos, `always_comb`, `__parallel`, `constexpr` como `localparam`, llamadas como instanciación); las funciones `__sequential` se emiten como FSM (`always_ff` con estados numerados y handshake `start`/`done`): cada tramo de sentencias simples ocupa un ciclo y cada bucle agrega un estado de chequeo de condición (y, en un `for`, uno de inicialización y otro de update), así que una iteración de `while` toma 2 ciclos y una de `for`, 3.
 
 ## Estrategia de pruebas
 

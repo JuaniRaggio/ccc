@@ -103,6 +103,12 @@ Cada return emitía `out = expr;` sin guarda, así que con varios returns ganaba
 exige que los returns estén en posición tail; el idioma soportado es `if/else` con un return por
 rama. Reject 47, PR #17.
 
+### F26 — Llamada dentro de un bucle combinacional
+
+`for (...) s += g(a[i]);` se aceptaba y generaba una sola instancia de `g` conectada a `a[i]` fuera
+del `always_comb`, así que el circuito no calculaba la suma; ni el lint lo detectaba. Fix: se rechaza
+una llamada dentro de un bucle de una función combinacional. Reject 51.
+
 ## Backend secuencial
 
 ### F2 — RAW intra-ciclo en `__sequential`
@@ -115,6 +121,47 @@ grupo de ciclo (IDLE/iteración/epílogo) reusando `AccessSets`, con rechazo. Re
 
 `for(i=0;i<8;i+=n)` con `n` runtime se aceptaba (trip count dinámico, no sintetizable, y el lint no lo
 atrapaba). Fix: el update también debe ser constante, salvo en `__sequential`. Reject 39, PR #9.
+
+### F20 — Return o bucle dentro de un bloque `{ }` suelto en `__sequential`
+
+Un `return` dentro de un bloque suelto se aceptaba y el generador no emitía nada para él: `out` nunca
+se asignaba, sin error ni warning del lint. Un bloque suelto de sentencias simples también se
+descartaba en silencio. Un bucle dentro de un bloque suelto se rechazaba, pero con un mensaje de RAW
+engañoso. Fix: se rechazan los bucles y `return` dentro de un bloque suelto, y el generador emite los
+bloques de sentencias simples en el ciclo que los contiene. Reject 55 y 56, accept 41 (simulado).
+
+### F21 — Locales con el mismo nombre declarados dos veces
+
+Todo local se declara a nivel de módulo, así que dos `for (uint32_t i ...)` emitían `logic [31:0] i;`
+dos veces y Verilator e Icarus fallaban por declaración duplicada (también en funciones
+combinacionales). Con tipos distintos el registro quedaba mal tipado. Fix: se rechaza ocultar o
+redeclarar un nombre visible y reusar un nombre con otro tipo o tamaño; los locales hermanos del mismo
+tipo comparten una única declaración. Reject 58 y 59, accept 40 (simulado) y 42.
+
+### F22 — `for` sin condición
+
+`for (init; ; update)` se aceptaba y la FSM emitía `if ()`, que no compila. Fix: todo `for` debe
+tener condición. Reject 57.
+
+### F23 — Referencia leída y escrita en `__sequential` emitida como `inout`
+
+Se emitía un puerto `inout` asignado desde `always_ff`. Verilator lo rechaza (`Unsupported tristate
+construct`) e Icarus también (`not a valid l-value`). Fix: la referencia se divide en la entrada
+`<nombre>_in`, que se carga al recibir `start`, y el registro de salida `<nombre>`; vale también para
+arreglos. Se rechaza un nombre que choque con los que agrega el generador. Accept 39 (simulado),
+reject 61 y 62.
+
+### F24 — RAW dentro de un `if` en un ciclo de `__sequential`
+
+El chequeo de RAW trataba cada `if` como una sola sentencia, así que `if (c) { a = i; b = a; }` no se
+detectaba y `b` leía el valor viejo de `a`. Fix: el chequeo recorre el ciclo en orden, entrando en las
+ramas del `if` y en los bloques. Reject 60.
+
+### F25 — Scheduler duplicado entre análisis y generador
+
+El análisis de hazards reimplementaba la segmentación en ciclos del generador, así que podían
+discrepar sobre qué sentencias comparten un ciclo. Fix: ambos usan `SeqSchedule.c`. El ancho del
+registro de estado (antes fijo en 16 bits, sin chequeo) se deriva de la cantidad de estados.
 
 ## Constexpr
 
@@ -169,8 +216,10 @@ rechazan; el chequeo de aliasing y el de driver único son slice-aware. Accept 3
 `__sequential` admite múltiples bucles secuenciales y bucles anidados: emisor de FSM general con
 estados numerados (desazucara `for` a init + `while`, emisión recursiva por regiones) y chequeo de
 hazard RAW recursivo. Restricciones: sin llamadas en el cuerpo, un bucle no puede estar dentro de un
-`if`, y el `return` debe ser la última sentencia top-level. Accept 37 (anidado), 38 (dos bucles),
-ambos simulados con Icarus.
+`if`, el `return` debe ser la última sentencia top-level, y un bloque `{ }` suelto no puede contener
+bucles ni `return` (cada una con su propio mensaje de error; reject 52 a 56). Accept 37 (anidado),
+38 (dos bucles), ambos simulados con Icarus. Una iteración de `while` toma 2 ciclos y una de `for`, 3
+(ver `doc/language-reference.typ`).
 
 ## Pendiente (features, no bugs)
 
