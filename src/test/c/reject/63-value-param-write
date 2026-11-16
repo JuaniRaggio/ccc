@@ -1,0 +1,4 @@
+int32_t f(int32_t n) {
+    n = n + 1;
+    return n;
+}

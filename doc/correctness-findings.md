@@ -83,6 +83,13 @@ registro). Reject 45, PR #15.
 Mismo bucle que F13 pero con un parámetro arreglo; el chequeo de read-write no cubría arreglos. Fix:
 se extiende el chequeo a `PARAM_ARRAY`. Reject 48, PR #17.
 
+### F27 — Escribir un parámetro por valor
+
+Un parámetro por valor es un puerto `input`; `n = n + 1` sobre él generaba una asignación a un input
+(`ASSIGNIN`, ilegal), aceptada por el frontend. Bug pre-existente hallado en el review del PR #23. Fix:
+se rechaza escribir un parámetro por valor (vale para combinacional y secuencial; las funciones
+`constexpr` se interpretan, así que pueden mutar la copia). Reject 63.
+
 ## Flujo de control combinacional
 
 ### F5 — `out` no asignado en todo camino
