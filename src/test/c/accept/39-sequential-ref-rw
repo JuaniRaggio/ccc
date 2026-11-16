@@ -1,0 +1,7 @@
+__sequential void acumular(uint32_t & r, uint32_t n) {
+    uint32_t i = 0;
+    while (i < n) {
+        r = r + i;
+        i++;
+    }
+}

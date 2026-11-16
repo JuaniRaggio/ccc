@@ -1,0 +1,10 @@
+uint32_t f(uint32_t a[4]) {
+    uint32_t s = 0;
+    for (uint32_t i = 0; i < 4; i++) {
+        s += a[i];
+    }
+    for (uint8_t i = 0; i < 4; i++) {
+        s += a[i];
+    }
+    return s;
+}

@@ -1,0 +1,10 @@
+int32_t doble_suma(int32_t a[4]) {
+    int32_t s = 0;
+    for (uint32_t i = 0; i < 4; i++) {
+        s += a[i];
+    }
+    for (uint32_t i = 0; i < 4; i++) {
+        s += a[i];
+    }
+    return s;
+}

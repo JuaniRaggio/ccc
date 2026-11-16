@@ -132,6 +132,13 @@ desenrollan. La iteración data-dependiente solo se admite dentro de una funció
 Las referencias (`&`) son parámetros escalares de entrada/salida y no son indexables. Un buffer se
 pasa como parámetro arreglo (`tipo nombre[tamaño]`).
 
+Cada parámetro y cada local de una función se traduce a una única señal del módulo, sin importar el
+scope donde se declaró. Por eso un nombre no puede ocultar ni redeclarar otro visible (incluido un
+parámetro), y dos locales con el mismo nombre en scopes hermanos (por ejemplo, dos
+`for (uint32_t i = ...)` seguidos) comparten la señal y deben tener el mismo tipo y tamaño. Tampoco
+se pueden usar los nombres que agrega el generador: `out` en una función no-`void`, y `clk`, `rst`,
+`start`, `done`, `ccc_*` y `<referencia>_in` en una `__sequential`.
+
 = Mapeo a hardware
 
 == Combinacional por defecto
@@ -151,6 +158,9 @@ análisis garantizó que no hay dependencias (RAW/WAW/WAR) entre ellas.
 
 Una llamada instancia el módulo invocado, conecta sus argumentos a los puertos de entrada y
 expone el resultado en una señal que reemplaza a la llamada en la expresión.
+Como cada llamada es una única instancia fuera del `always_comb`, una función combinacional no
+puede llamar a otra dentro de un bucle: todas las iteraciones compartirían la misma instancia y el
+argumento conectado no sería el de cada iteración.
 
 == `constexpr`
 
@@ -164,29 +174,37 @@ Una función anotada con `__sequential` se traduce a una FSM con `always_ff`, pu
 handshake `start`/`done`, en vez de lógica combinacional. Reusa hardware por iteración a cambio de
 latencia, y por eso admite bucles con límite data-dependiente.
 
-El cuerpo se interpreta como preámbulo (declaraciones y asignaciones simples) + un bucle +
-epílogo (el `return`). La FSM tiene tres estados:
+El cuerpo se agenda en una FSM de estados numerados: el `0` es IDLE (con `done` en `0`, espera
+`start`), el `1` es DONE (asigna `done` en `1` por un ciclo y vuelve a IDLE) y el resto los asigna
+el _scheduler_. El ancho del registro de estado se deriva de la cantidad de estados.
 
-- `CCC_IDLE`: con `done` en `0`, espera `start`; al llegar inicializa los registros y pasa a
-  `CCC_RUN`.
-- `CCC_RUN`: mientras la condición del bucle se cumple ejecuta una iteración por ciclo; cuando deja
-  de cumplirse registra el resultado en `out` y pasa a `CCC_DONE`.
-- `CCC_DONE`: asigna `done` en `1` por un ciclo y vuelve a `CCC_IDLE`.
+- Cada tramo máximo de sentencias simples (declaraciones, asignaciones, `if` sin bucles, bloques
+  `{ }` sin bucles ni `return`) es un estado: se ejecuta en un ciclo.
+- Cada bucle es un estado de chequeo de condición seguido de la región de su cuerpo. Un `for`
+  agrega un estado para su inicialización y otro para su update. Una iteración de `while` toma 2
+  ciclos (chequeo + cuerpo) y una de `for`, 3 (chequeo + cuerpo + update), si el cuerpo es un
+  solo tramo.
+- Se admiten múltiples bucles en secuencia y bucles anidados.
 
 Las actualizaciones de registro usan asignación no bloqueante (`<=`): las sentencias de un mismo
 ciclo son concurrentes, por lo que una lectura ve el valor del flanco anterior. Para que esto no
 contradiga el orden secuencial del código, se rechaza toda dependencia _read-after-write_ dentro de
-un ciclo (una sentencia que lee lo que otra anterior del mismo ciclo escribió); hay que separarla en
-iteraciones. Los parámetros por valor son entradas que deben mantenerse estables durante la
-ejecución.
+un ciclo (una sentencia que lee lo que otra anterior del mismo ciclo escribió, también dentro de un
+`if` o de un bloque); hay que separarla en iteraciones. El análisis de _hazards_ y el generador
+usan la misma segmentación en ciclos (`SeqSchedule.c`), así que no pueden discrepar. Los parámetros
+por valor son entradas que deben mantenerse estables durante la ejecución.
 
-El cuerpo admite múltiples bucles secuenciales y bucles anidados: se agenda en una FSM de estados
-numerados (0 = IDLE, 1 = DONE, resto asignados por el _scheduler_), donde cada corrida máxima de
-sentencias simples es un estado (un ciclo) y cada bucle es un estado de chequeo de condición más la
-región de su cuerpo; el `for` se desazucara a init + `while`. El análisis de _hazards_ recorre esas
-regiones y verifica RAW por ciclo. Limitaciones actuales: sin llamadas a función en el cuerpo
-(requiere sub-FSM, ver @sec-futuro); un bucle no puede estar dentro de un `if`; el `return` debe ser
-la última sentencia de nivel superior.
+Una referencia (o arreglo) que la función lee y escribe se divide en dos puertos: la entrada
+`<nombre>_in`, que se carga en el registro al recibir `start`, y la salida `<nombre>`, que tiene el
+valor final cuando `done` sube. Una referencia solo leída es `input` y una solo escrita, `output`.
+
+Restricciones actuales, rechazadas por el análisis semántico:
+
+- sin llamadas a función en el cuerpo (requiere sub-FSM, ver @sec-futuro) ni bloques `__parallel`;
+- un bucle no puede estar dentro de un `if` (un `if` se resuelve dentro de un ciclo);
+- el `return` debe ser la última sentencia de nivel superior, fuera de todo `if`, bucle o bloque;
+- un bloque `{ }` suelto no puede contener bucles ni `return`;
+- todo `for` debe tener condición.
 
 = Trabajo futuro <sec-futuro>
 

@@ -1,0 +1,14 @@
+__sequential uint32_t bloque(uint32_t n) {
+    uint32_t i = 0;
+    uint32_t acc;
+    {
+        acc = n;
+    }
+    while (i < 3) {
+        {
+            acc += 1;
+        }
+        i++;
+    }
+    return acc;
+}

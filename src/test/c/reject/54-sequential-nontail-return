@@ -1,0 +1,5 @@
+__sequential uint32_t f(uint32_t n) {
+    uint32_t acc = n;
+    return acc;
+    acc = 0;
+}

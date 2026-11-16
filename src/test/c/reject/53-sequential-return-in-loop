@@ -1,0 +1,7 @@
+__sequential uint32_t f(uint32_t n) {
+    uint32_t i = 0;
+    while (i < n) {
+        return i;
+    }
+    return 0;
+}

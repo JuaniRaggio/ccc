@@ -2,6 +2,7 @@
 #include "frontend/semantic-analysis/ConstexprEval.h"
 #include "frontend/syntactic-analysis/AccessSets.h"
 #include "frontend/syntactic-analysis/AstWalk.h"
+#include "frontend/syntactic-analysis/SeqSchedule.h"
 #include "frontend/syntactic-analysis/TypeInfo.h"
 #include <inttypes.h>
 #include <string.h>
@@ -367,12 +368,16 @@ _emitStmt(Stmt *stmt, int indent) {
 	}
 }
 
+/* Every local becomes one module-level signal. Locals of the same name in sibling scopes
+ * (two `for (uint32_t i ...)` loops) share it: the semantic analysis guarantees they have
+ * the same type and size and never shadow each other, so their lifetimes do not overlap. */
 static void
 _emitLocalDecl(Stmt *stmt, void *context) {
-	(void)context;
-	if (stmt->kind != STMT_LOCAL_DECL) {
+	NameSet *emitted = context;
+	if (stmt->kind != STMT_LOCAL_DECL || nameSetContains(emitted, stmt->localDecl.name)) {
 		return;
 	}
+	nameSetAdd(emitted, stmt->localDecl.name);
 	fprintf(stdout, "  ");
 	_emitType(stmt->localDecl.type);
 	fprintf(stdout, " ");
@@ -383,6 +388,13 @@ _emitLocalDecl(Stmt *stmt, void *context) {
 		fprintf(stdout, "]");
 	}
 	fprintf(stdout, ";\n");
+}
+
+static void
+_emitLocalDecls(Stmt *body) {
+	NameSet emitted = { 0 };
+	walkStmts(body, _emitLocalDecl, &emitted);
+	nameSetFree(&emitted);
 }
 
 /* A bare call (realized by its instantiation) and a parallel block are not procedural statements. */
@@ -424,11 +436,12 @@ _refDirection(Stmt *body, const char *name) {
 }
 
 static void
-_emitPort(Param *param, const char *direction, bool last) {
+_emitPort(Param *param, const char *direction, const char *suffix, bool last) {
 	fprintf(stdout, "  %s ", direction);
 	_emitType(param->type);
 	fprintf(stdout, " ");
 	_emitIdent(param->name);
+	fprintf(stdout, "%s", suffix);
 	if (param->kind == PARAM_ARRAY) {
 		fprintf(stdout, " [");
 		_emitExpr(param->arraySize);
@@ -496,12 +509,36 @@ _emitInstances(CallList *calls) {
 }
 
 /* --- Sequential (FSM) backend ---
- * A __sequential function becomes a clocked module with a start/done handshake.
- * The body is preamble (simple statements) + one loop + epilogue (return); the loop
- * runs one iteration per clock. Register updates use nonblocking assignment so an
- * iteration reads the values latched at the previous edge. */
+ * A __sequential function becomes a clocked module with a start/done handshake. The body
+ * is scheduled into numbered states (see SeqSchedule.h): each run of simple statements
+ * takes one clock, and each loop takes a condition-check state plus its body (a `for` adds
+ * init and update states). Register updates use nonblocking assignment, so a state reads
+ * the values latched at the previous edge. */
 
 static void _emitSeqStmt(Stmt *stmt, int indent);
+
+/* Width of the state register, derived from the number of states the body schedules. */
+static int _seqWidth;
+
+static void
+_emitStateLabel(int id) {
+	fprintf(stdout, "%d'd%d", _seqWidth, id);
+}
+
+static void
+_emitGoto(int id, int indent) {
+	_emitIndent(indent);
+	fprintf(stdout, "ccc_state <= ");
+	_emitStateLabel(id);
+	fprintf(stdout, ";\n");
+}
+
+static void
+_emitStateOpen(int id) {
+	fprintf(stdout, "        ");
+	_emitStateLabel(id);
+	fprintf(stdout, ": begin\n");
+}
 
 static void
 _emitSeqAssign(Expr *assign, int indent) {
@@ -561,6 +598,14 @@ _emitSeqStmt(Stmt *stmt, int indent) {
 			_emitExpr(stmt->localDecl.init);
 			fprintf(stdout, ";\n");
 		}
+		int index = 0;
+		for (ExprList *initNode = stmt->localDecl.initList; initNode != NULL; initNode = initNode->next) {
+			_emitIndent(indent);
+			_emitIdent(stmt->localDecl.name);
+			fprintf(stdout, "[%d] <= ", index++);
+			_emitExpr(initNode->expr);
+			fprintf(stdout, ";\n");
+		}
 		break;
 	case STMT_IF:
 		_emitIndent(indent);
@@ -576,6 +621,13 @@ _emitSeqStmt(Stmt *stmt, int indent) {
 			_emitSeqBranch(stmt->ifStmt.elseBranch, indent + 2);
 			_emitIndent(indent);
 			fprintf(stdout, "end\n");
+		}
+		break;
+	case STMT_COMPOUND:
+		/* A bare block of simple statements runs in the enclosing cycle (the semantic
+		 * analysis rejects loops and returns inside one). */
+		for (StmtList *node = stmt->compound; node != NULL; node = node->next) {
+			_emitSeqStmt(node->stmt, indent);
 		}
 		break;
 	default:
@@ -598,12 +650,8 @@ _emitSeqOrReturn(Stmt *stmt, int indent) {
 	}
 }
 
-/* Generalized multi-loop FSM. The body is scheduled into numbered states (state 0 = IDLE,
- * 1 = DONE, 2+ allocated below). A region (statement list) is a chain of segments: a
- * maximal run of simple statements becomes one state (one clock), and each loop becomes a
- * condition-check state plus its body region. `for` is desugared to init + while(cond){ body;
- * update }. Nested loops recurse. States reference each other by id; forward ids are
- * allocated before the referencing arm is emitted. */
+/* State 0 = IDLE, 1 = DONE, 2+ allocated below. States reference each other by id;
+ * forward ids are allocated before the referencing arm is emitted. */
 static int _seqState;
 
 static int
@@ -611,103 +659,105 @@ _seqAlloc(void) {
 	return _seqState++;
 }
 
-static int _emitSeqRegion(StmtList *stmts, int exitId);
-
-static int
-_emitSeqRegionStmt(Stmt *body, int exitId) {
-	if (body == NULL) {
-		return exitId;
-	}
-	if (body->kind == STMT_COMPOUND) {
-		return _emitSeqRegion(body->compound, exitId);
-	}
-	StmtList single = { .stmt = body, .next = NULL };
-	return _emitSeqRegion(&single, exitId);
-}
+static int _emitSeqRegion(Stmt *body, int exitId);
 
 static int
 _emitSeqLoop(Stmt *loop, int exitId) {
 	bool isFor = loop->kind == STMT_FOR;
 	Expr *cond = isFor ? loop->forStmt.condition : loop->whileStmt.condition;
-	Stmt *body = isFor ? loop->forStmt.body : loop->whileStmt.body;
 	Expr *update = isFor ? loop->forStmt.update : NULL;
 	Stmt *init = isFor ? loop->forStmt.init : NULL;
 
 	int checkId = _seqAlloc();
 	int updateId = update != NULL ? _seqAlloc() : -1;
 	int bodyExit = updateId != -1 ? updateId : checkId;
-	int bodyEntry = _emitSeqRegionStmt(body, bodyExit);
+	int bodyEntry = _emitSeqRegion(seqLoopBody(loop), bodyExit);
 
-	fprintf(stdout, "        16'd%d: begin\n", checkId);
+	_emitStateOpen(checkId);
 	fprintf(stdout, "          if (");
 	_emitExpr(cond);
-	fprintf(stdout, ") ccc_state <= 16'd%d;\n", bodyEntry);
-	fprintf(stdout, "          else ccc_state <= 16'd%d;\n", exitId);
-	fprintf(stdout, "        end\n");
+	fprintf(stdout, ") ccc_state <= ");
+	_emitStateLabel(bodyEntry);
+	fprintf(stdout, ";\n          else ccc_state <= ");
+	_emitStateLabel(exitId);
+	fprintf(stdout, ";\n        end\n");
 
 	if (updateId != -1) {
-		fprintf(stdout, "        16'd%d: begin\n", updateId);
+		_emitStateOpen(updateId);
 		_emitSeqStep(update, 10);
-		fprintf(stdout, "          ccc_state <= 16'd%d;\n", checkId);
+		_emitGoto(checkId, 10);
 		fprintf(stdout, "        end\n");
 	}
 
 	if (init != NULL) {
 		int initId = _seqAlloc();
-		fprintf(stdout, "        16'd%d: begin\n", initId);
+		_emitStateOpen(initId);
 		_emitSeqOrReturn(init, 10);
-		fprintf(stdout, "          ccc_state <= 16'd%d;\n", checkId);
+		_emitGoto(checkId, 10);
 		fprintf(stdout, "        end\n");
 		return initId;
 	}
 	return checkId;
 }
 
+/* Emits a region's segments right to left, so each one transitions to the next one's
+ * entry; returns the region's entry state. */
+static int
+_emitSeqRegion(Stmt *body, int exitId) {
+	SeqRegion region = seqRegionOf(body);
+	int nextEntry = exitId;
+	for (int i = region.count - 1; i >= 0; --i) {
+		SeqSegment *segment = &region.segments[i];
+		if (segment->isLoop) {
+			nextEntry = _emitSeqLoop(segment->stmts[0], nextEntry);
+			continue;
+		}
+		int stateId = _seqAlloc();
+		_emitStateOpen(stateId);
+		for (int k = 0; k < segment->count; ++k) {
+			_emitSeqOrReturn(segment->stmts[k], 10);
+		}
+		_emitGoto(nextEntry, 10);
+		fprintf(stdout, "        end\n");
+		nextEntry = stateId;
+	}
+	seqRegionFree(&region);
+	return nextEntry;
+}
+
 static bool
-_isSeqLoop(Stmt *stmt) {
-	return stmt->kind == STMT_FOR || stmt->kind == STMT_WHILE;
+_isReadWriteRef(Decl *function, Param *param) {
+	return (param->kind == PARAM_REF || param->kind == PARAM_ARRAY)
+	       && strcmp(_refDirection(function->func.body, param->name), "inout ") == 0;
+}
+
+/* A reference read and written by a __sequential function is split into an input port
+ * `<name>_in` (the caller's value) and an output register `<name>`, loaded on start. A
+ * module cannot drive an inout from always_ff. */
+static void
+_emitRefLoads(Decl *function) {
+	for (ParamList *node = function->func.params; node != NULL; node = node->next) {
+		Param *param = node->param;
+		if (!_isReadWriteRef(function, param)) {
+			continue;
+		}
+		if (param->kind == PARAM_ARRAY) {
+			fprintf(stdout, "            for (int ccc_k = 0; ccc_k < ");
+			_emitExpr(param->arraySize);
+			fprintf(stdout, "; ccc_k++) %s[ccc_k] <= %s_in[ccc_k];\n", param->name, param->name);
+		} else {
+			fprintf(stdout, "            %s <= %s_in;\n", param->name, param->name);
+		}
+	}
 }
 
 static int
-_emitSeqRegion(StmtList *stmts, int exitId) {
-	int count = 0;
-	for (StmtList *node = stmts; node != NULL; node = node->next) {
-		++count;
+_bitsFor(int values) {
+	int bits = 1;
+	while ((1 << bits) < values) {
+		++bits;
 	}
-	if (count == 0) {
-		return exitId;
-	}
-	Stmt **items = malloc(count * sizeof(Stmt *));
-	int index = 0;
-	for (StmtList *node = stmts; node != NULL; node = node->next) {
-		items[index++] = node->stmt;
-	}
-
-	/* Thread right-to-left so each segment transitions to the next one's entry. */
-	int nextEntry = exitId;
-	int i = count - 1;
-	while (i >= 0) {
-		if (_isSeqLoop(items[i])) {
-			nextEntry = _emitSeqLoop(items[i], nextEntry);
-			--i;
-		} else {
-			int start = i;
-			while (start - 1 >= 0 && !_isSeqLoop(items[start - 1])) {
-				--start;
-			}
-			int stateId = _seqAlloc();
-			fprintf(stdout, "        16'd%d: begin\n", stateId);
-			for (int k = start; k <= i; ++k) {
-				_emitSeqOrReturn(items[k], 10);
-			}
-			fprintf(stdout, "          ccc_state <= 16'd%d;\n", nextEntry);
-			fprintf(stdout, "        end\n");
-			nextEntry = stateId;
-			i = start - 1;
-		}
-	}
-	free(items);
-	return nextEntry;
+	return bits;
 }
 
 static void
@@ -725,10 +775,17 @@ _emitSequentialModule(Decl *function, bool importPackage) {
 
 	bool hasReturn = function->func.returnType != TYPE_VOID;
 	for (ParamList *paramNode = function->func.params; paramNode != NULL; paramNode = paramNode->next) {
-		const char *direction = (paramNode->param->kind == PARAM_REF || paramNode->param->kind == PARAM_ARRAY)
-		                            ? _refDirection(function->func.body, paramNode->param->name)
+		Param *param = paramNode->param;
+		bool last = !hasReturn && paramNode->next == NULL;
+		if (_isReadWriteRef(function, param)) {
+			_emitPort(param, "input ", "_in", false);
+			_emitPort(param, "output", "", last);
+			continue;
+		}
+		const char *direction = (param->kind == PARAM_REF || param->kind == PARAM_ARRAY)
+		                            ? _refDirection(function->func.body, param->name)
 		                            : "input ";
-		_emitPort(paramNode->param, direction, !hasReturn && paramNode->next == NULL);
+		_emitPort(param, direction, "", last);
 	}
 	if (hasReturn) {
 		fprintf(stdout, "  output ");
@@ -737,28 +794,33 @@ _emitSequentialModule(Decl *function, bool importPackage) {
 	}
 	fprintf(stdout, ");\n");
 
-	fprintf(stdout, "  logic [15:0] ccc_state;\n");
-	walkStmts(function->func.body, _emitLocalDecl, NULL);
+	_seqWidth = _bitsFor(2 + seqCountStates(function->func.body));
+	fprintf(stdout, "  logic [%d:0] ccc_state;\n", _seqWidth - 1);
+	_emitLocalDecls(function->func.body);
 
 	fprintf(stdout, "  always_ff @(posedge clk) begin\n");
 	fprintf(stdout, "    if (rst) begin\n");
-	fprintf(stdout, "      ccc_state <= 16'd0;\n");
+	_emitGoto(0, 6);
 	fprintf(stdout, "      done <= 1'b0;\n");
 	fprintf(stdout, "    end else begin\n");
 	fprintf(stdout, "      case (ccc_state)\n");
 
-	_seqState = 2; /* 0 = IDLE, 1 = DONE */
-	int entry = _emitSeqRegion(function->func.body->compound, 1);
+	_seqState = 2;
+	int entry = _emitSeqRegion(function->func.body, 1);
 
-	fprintf(stdout, "        16'd0: begin\n");
+	_emitStateOpen(0);
 	fprintf(stdout, "          done <= 1'b0;\n");
-	fprintf(stdout, "          if (start) ccc_state <= 16'd%d;\n", entry);
+	fprintf(stdout, "          if (start) begin\n");
+	_emitRefLoads(function);
+	_emitGoto(entry, 12);
+	fprintf(stdout, "          end\n");
 	fprintf(stdout, "        end\n");
-	fprintf(stdout, "        16'd1: begin\n");
+	_emitStateOpen(1);
 	fprintf(stdout, "          done <= 1'b1;\n");
-	fprintf(stdout, "          ccc_state <= 16'd0;\n");
+	_emitGoto(0, 10);
 	fprintf(stdout, "        end\n");
-	fprintf(stdout, "        default: ccc_state <= 16'd0;\n");
+	fprintf(stdout, "        default: ");
+	_emitGoto(0, 0);
 	fprintf(stdout, "      endcase\n");
 	fprintf(stdout, "    end\n");
 	fprintf(stdout, "  end\n");
@@ -779,7 +841,7 @@ _emitModule(Decl *function, bool importPackage) {
 		const char *direction = (paramNode->param->kind == PARAM_REF || paramNode->param->kind == PARAM_ARRAY)
 		                            ? _refDirection(function->func.body, paramNode->param->name)
 		                            : "input ";
-		_emitPort(paramNode->param, direction, !hasReturn && paramNode->next == NULL);
+		_emitPort(paramNode->param, direction, "", !hasReturn && paramNode->next == NULL);
 	}
 	if (hasReturn) {
 		fprintf(stdout, "  output ");
@@ -788,7 +850,7 @@ _emitModule(Decl *function, bool importPackage) {
 	}
 	fprintf(stdout, ");\n");
 
-	walkStmts(function->func.body, _emitLocalDecl, NULL);
+	_emitLocalDecls(function->func.body);
 
 	CallList calls = { .items = NULL, .count = 0, .capacity = 0 };
 	walkStmtExprs(function->func.body, _collectCall, &calls);
