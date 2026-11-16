@@ -4,8 +4,12 @@
 #include <string.h>
 
 #define EVAL_BUDGET (1 << 24)
+/* Bounds call and constexpr-variable expansion depth so recursive or self-referential
+ * constexpr (which the language forbids) fails cleanly instead of overflowing the stack. */
+#define EVAL_MAX_DEPTH 1024
 
 static int64_t _budget;
+static int _depth;
 
 typedef struct {
 	char **names;
@@ -136,6 +140,11 @@ _evalCall(Expr *expr, Program *program, Env *env, bool *ok) {
 		*ok = false;
 		return 0;
 	}
+	if (++_depth > EVAL_MAX_DEPTH) {
+		--_depth;
+		*ok = false;
+		return 0;
+	}
 	Env local = { .names = NULL, .values = NULL, .count = 0, .capacity = 0 };
 	ParamList *param = function->func.params;
 	ExprList *arg = expr->call.args;
@@ -147,6 +156,7 @@ _evalCall(Expr *expr, Program *program, Env *env, bool *ok) {
 	_exec(function->func.body, program, &local, ok, &returned, &retval);
 	free(local.names);
 	free(local.values);
+	--_depth;
 	return retval;
 }
 
@@ -188,7 +198,14 @@ _eval(Expr *expr, Program *program, Env *env, bool *ok) {
 		}
 		Decl *var = _findDecl(program, expr->name, DECL_CONSTEXPR_VAR);
 		if (var != NULL) {
-			return _eval(var->constexprVar.init, program, NULL, ok);
+			if (++_depth > EVAL_MAX_DEPTH) {
+				--_depth;
+				*ok = false;
+				return 0;
+			}
+			int64_t result = _eval(var->constexprVar.init, program, NULL, ok);
+			--_depth;
+			return result;
 		}
 		*ok = false;
 		return 0;
@@ -349,6 +366,7 @@ bool
 evalConstexpr(Expr *expr, Program *program, int64_t *out) {
 	bool ok = true;
 	_budget = EVAL_BUDGET;
+	_depth = 0;
 	int64_t value = _eval(expr, program, NULL, &ok);
 	if (ok) {
 		*out = value;

@@ -1829,6 +1829,54 @@ _checkGeneratedNames(Program *program) {
 	return true;
 }
 
+/* An array initializer that is longer than the array writes out of bounds; a constexpr
+ * array localparam must be initialized with exactly its size. */
+static bool
+_arrayInitSizeOk(Program *program, Expr *size, ExprList *init, bool exact) {
+	int64_t declared;
+	if (!evalConstexpr(size, program, &declared)) {
+		return true; /* a non-constant size is rejected elsewhere */
+	}
+	int count = 0;
+	for (ExprList *node = init; node != NULL; node = node->next) {
+		++count;
+	}
+	if (count == 0) {
+		return true; /* no initializer */
+	}
+	return exact ? count == declared : count <= declared;
+}
+
+typedef struct {
+	Program *program;
+	bool violation;
+} ArraySizeScope;
+
+static void
+_checkLocalArraySize(Stmt *stmt, void *context) {
+	ArraySizeScope *scope = context;
+	if (stmt->kind == STMT_LOCAL_DECL && stmt->localDecl.arraySize != NULL && stmt->localDecl.initList != NULL
+	    && !_arrayInitSizeOk(scope->program, stmt->localDecl.arraySize, stmt->localDecl.initList, false)) {
+		scope->violation = true;
+	}
+}
+
+static bool
+_checkArraySizes(Program *program) {
+	ArraySizeScope scope = { .program = program, .violation = false };
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (decl->kind == DECL_CONSTEXPR_ARRAY) {
+			if (!_arrayInitSizeOk(program, decl->constexprArray.size, decl->constexprArray.init, true)) {
+				return false;
+			}
+		} else if (_isFunctionDecl(decl)) {
+			walkStmts(decl->func.body, _checkLocalArraySize, &scope);
+		}
+	}
+	return !scope.violation;
+}
+
 bool
 executeSemanticAnalysis(CompilerState *compilerState) {
 	logDebugging(_logger, "Analyzing semantics...");
@@ -1874,6 +1922,10 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 	}
 	if (!_checkConstexprEvaluable(program)) {
 		logError(_logger, "A constexpr declaration must evaluate to a compile-time constant.");
+		return false;
+	}
+	if (!_checkArraySizes(program)) {
+		logError(_logger, "An array initializer must not exceed the array size (constexpr arrays must match it).");
 		return false;
 	}
 	if (!_checkLoopBounds(program)) {

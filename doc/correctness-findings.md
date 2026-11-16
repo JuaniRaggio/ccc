@@ -52,6 +52,13 @@ mezcla de signo no se rechazaba, `__min(uint,uint)` se over-rechazaba (misma cla
 el resultado sigue a los operandos (`__abs` conserva el tipo; `__min`/`__max` el tipo común y rechazan
 mezcla de signo). Accept 36, reject 49/50, PR #19.
 
+### F28 — Shift a la derecha con signo emitido como lógico
+
+SystemVerilog `>>` es siempre lógico; un shift aritmético con signo necesita `>>>`. El generador
+emitía `>>` para todo `>>`, así que `int32_t x >> 4` con `x=-32` daba `268435454` en vez de `-2`
+(pasaba frontend y lint; el único test de shift usaba `uint32_t`). Fix: el generador infiere la
+signedness del operando izquierdo (`_exprSigned`) y emite `>>>` si es signado. Accept 43 (simulado).
+
 ## Referencias, arreglos y drivers
 
 ### F9 — Dirección de puerto de una referencia escrita vía llamada
@@ -177,6 +184,20 @@ registro de estado (antes fijo en 16 bits, sin chequeo) se deriva de la cantidad
 Una función `constexpr` con `a[0]++` no evaluaba y el generador emitía `localparam X = __call-1`.
 Además había un misread de unión en `a[i]++`. Fix: toda declaración `constexpr` debe evaluar a
 constante (reject 40); el intérprete falla limpio en lvalues no escalares. PR #10.
+
+### F29 — Constexpr recursivo/autorreferente crasheaba el compilador
+
+El budget del intérprete sólo contaba iteraciones de bucle, no llamadas ni expansión de variables, así
+que `constexpr int32_t f(int32_t n){ return f(n); }` (vía un uso tipado) y `constexpr int32_t x = x;`
+desbordaban el stack. `_checkNoRecursion` sólo modela llamadas entre funciones, no referencias entre
+variables. Fix: límite de profundidad (`EVAL_MAX_DEPTH`) en cada llamada y expansión de variable del
+intérprete; fallan limpio. Reject 64.
+
+### F30 — Init-list de arreglo con largo distinto al tamaño
+
+`constexpr int32_t a[5] = {1,2}` emitía un `localparam` de 5 elementos con 2 valores (inelaborable), y
+`int32_t a[2] = {1,2,3}` escribía `a[2]` fuera de rango. Ambos aceptados por el frontend. Fix: el
+init de un `constexpr` debe igualar el tamaño; el de un local no puede excederlo. Reject 65, 66.
 
 ## Descartados (verificados, no eran bugs)
 

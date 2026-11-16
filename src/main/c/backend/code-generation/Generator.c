@@ -11,6 +11,9 @@ static Logger *_logger = NULL;
 static Program *_program = NULL;
 static Expr **_callNodes = NULL;
 static int _callCount = 0;
+/* The function currently being emitted, used to resolve the type of an identifier so a
+ * right-shift of a signed operand can be emitted as the arithmetic `>>>`. */
+static Decl *_currentFunction = NULL;
 
 static Decl *
 _findFunctionDecl(const char *name) {
@@ -51,19 +54,19 @@ static bool
 _isReservedSV(const char *name) {
 	static const char *keywords[]
 	    = { "buf",       "wire",     "reg",       "and",       "or",         "not",        "nand",     "nor",
-		    "xor",       "xnor",     "logic",     "bit",       "byte",       "time",       "real",     "event",
-		    "table",     "input",    "output",    "inout",     "module",     "endmodule",  "begin",    "end",
-		    "always",    "assign",   "initial",   "parameter", "localparam", "genvar",     "signed",   "unsigned",
-		    "tri",       "supply0",  "supply1",   "posedge",   "negedge",    "edge",       "disable",  "force",
-		    "release",   "fork",     "join",      "task",      "function",   "casex",      "casez",    "specify",
-		    "primitive", "cell",     "config",    "wait",      "automatic",  "final",      "int",      "integer",
-		    "longint",   "shortint", "shortreal", "realtime",  "string",     "type",       "typedef",  "const",
-		    "static",    "class",    "interface", "package",   "endpackage", "program",    "struct",   "union",
-		    "enum",      "var",      "ref",       "virtual",   "extends",    "super",      "this",     "null",
-		    "new",       "local",    "protected", "rand",      "randc",      "constraint", "generate", "endgenerate",
-		    "forever",   "repeat",   "foreach",   "do",        "break",      "continue",   "assert",   "assume",
-		    "cover",     "bind",     "import",    "export",    "extern",     "wand",       "wor",      "chandle",
-		    "modport",   "clocking", "property",  "sequence",  "case",       "endcase",    "default",  NULL };
+	        "xor",       "xnor",     "logic",     "bit",       "byte",       "time",       "real",     "event",
+	        "table",     "input",    "output",    "inout",     "module",     "endmodule",  "begin",    "end",
+	        "always",    "assign",   "initial",   "parameter", "localparam", "genvar",     "signed",   "unsigned",
+	        "tri",       "supply0",  "supply1",   "posedge",   "negedge",    "edge",       "disable",  "force",
+	        "release",   "fork",     "join",      "task",      "function",   "casex",      "casez",    "specify",
+	        "primitive", "cell",     "config",    "wait",      "automatic",  "final",      "int",      "integer",
+	        "longint",   "shortint", "shortreal", "realtime",  "string",     "type",       "typedef",  "const",
+	        "static",    "class",    "interface", "package",   "endpackage", "program",    "struct",   "union",
+	        "enum",      "var",      "ref",       "virtual",   "extends",    "super",      "this",     "null",
+	        "new",       "local",    "protected", "rand",      "randc",      "constraint", "generate", "endgenerate",
+	        "forever",   "repeat",   "foreach",   "do",        "break",      "continue",   "assert",   "assume",
+	        "cover",     "bind",     "import",    "export",    "extern",     "wand",       "wor",      "chandle",
+	        "modport",   "clocking", "property",  "sequence",  "case",       "endcase",    "default",  NULL };
 	for (int i = 0; keywords[i] != NULL; ++i) {
 		if (strcmp(keywords[i], name) == 0) {
 			return true;
@@ -91,6 +94,91 @@ _emitType(TypeKind type) {
 }
 
 static void _emitExpr(Expr *expr);
+
+/* Looks up the type of a name in the current function (parameter or local) or a constexpr
+ * global, used only to decide the signedness of a right-shift. Returns false if unknown. */
+typedef struct {
+	const char *name;
+	TypeKind type;
+	bool found;
+} NameTypeQuery;
+
+static void
+_findLocalType(Stmt *stmt, void *context) {
+	NameTypeQuery *query = context;
+	if (!query->found && stmt->kind == STMT_LOCAL_DECL && strcmp(stmt->localDecl.name, query->name) == 0) {
+		query->type = stmt->localDecl.type;
+		query->found = true;
+	}
+}
+
+static bool
+_lookupNameType(const char *name, TypeKind *out) {
+	if (_currentFunction != NULL) {
+		for (ParamList *node = _currentFunction->func.params; node != NULL; node = node->next) {
+			if (strcmp(node->param->name, name) == 0) {
+				*out = node->param->type;
+				return true;
+			}
+		}
+		NameTypeQuery query = { .name = name, .found = false };
+		walkStmts(_currentFunction->func.body, _findLocalType, &query);
+		if (query.found) {
+			*out = query.type;
+			return true;
+		}
+	}
+	for (DeclList *node = _program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (decl->kind == DECL_CONSTEXPR_VAR && strcmp(decl->constexprVar.name, name) == 0) {
+			*out = decl->constexprVar.type;
+			return true;
+		}
+		if (decl->kind == DECL_CONSTEXPR_ARRAY && strcmp(decl->constexprArray.name, name) == 0) {
+			*out = decl->constexprArray.type;
+			return true;
+		}
+	}
+	return false;
+}
+
+/* Conservative signedness of an expression: true only when it is provably a signed integer.
+ * Used solely to pick `>>>` over `>>`; an unknown expression defaults to unsigned (`>>`),
+ * which is harmless because the semantic analyzer already forbids mixing signedness. */
+static bool
+_exprSigned(Expr *expr) {
+	if (expr == NULL) {
+		return false;
+	}
+	switch (expr->kind) {
+	case EXPR_INT_LITERAL:
+		return true; /* a bare literal is int32_t (signed). */
+	case EXPR_IDENTIFIER: {
+		TypeKind type;
+		return _lookupNameType(expr->name, &type) && typeSigned(type);
+	}
+	case EXPR_BINARY:
+		/* Shifts keep the left type; arithmetic shares the operands' signedness. */
+		if (expr->binary.op == BINOP_LSHIFT || expr->binary.op == BINOP_RSHIFT) {
+			return _exprSigned(expr->binary.left);
+		}
+		return _exprSigned(expr->binary.left) || _exprSigned(expr->binary.right);
+	case EXPR_UNARY:
+		return expr->unary.op == UNOP_NEG && _exprSigned(expr->unary.operand);
+	case EXPR_CAST:
+		return typeSigned(expr->cast.type);
+	case EXPR_ARRAY_ACCESS:
+		return _exprSigned(expr->arrayAccess.array);
+	case EXPR_INTRINSIC:
+		return expr->intrinsic.args != NULL && _exprSigned(expr->intrinsic.args->expr);
+	case EXPR_CALL: {
+		Decl *callee = _findFunctionDecl(expr->call.name);
+		return callee != NULL && typeSigned(callee->func.returnType);
+	}
+	default:
+		return false;
+	}
+}
 
 static void
 _emitIntrinsic(Expr *expr) {
@@ -171,13 +259,19 @@ _emitExpr(Expr *expr) {
 	case EXPR_IDENTIFIER:
 		_emitIdent(expr->name);
 		break;
-	case EXPR_BINARY:
+	case EXPR_BINARY: {
+		/* SystemVerilog `>>` is always logical; a signed right-shift must use `>>>`. */
+		const char *op = _binaryOp(expr->binary.op);
+		if (expr->binary.op == BINOP_RSHIFT && _exprSigned(expr->binary.left)) {
+			op = ">>>";
+		}
 		fprintf(stdout, "(");
 		_emitExpr(expr->binary.left);
-		fprintf(stdout, " %s ", _binaryOp(expr->binary.op));
+		fprintf(stdout, " %s ", op);
 		_emitExpr(expr->binary.right);
 		fprintf(stdout, ")");
 		break;
+	}
 	case EXPR_UNARY:
 		fprintf(stdout, "%s", expr->unary.op == UNOP_NEG ? "-" : "!");
 		_emitExpr(expr->unary.operand);
@@ -762,6 +856,7 @@ _bitsFor(int values) {
 
 static void
 _emitSequentialModule(Decl *function, bool importPackage) {
+	_currentFunction = function;
 	fprintf(stdout, "module ");
 	_emitIdent(function->func.name);
 	if (importPackage) {
@@ -829,6 +924,7 @@ _emitSequentialModule(Decl *function, bool importPackage) {
 
 static void
 _emitModule(Decl *function, bool importPackage) {
+	_currentFunction = function;
 	fprintf(stdout, "module ");
 	_emitIdent(function->func.name);
 	if (importPackage) {

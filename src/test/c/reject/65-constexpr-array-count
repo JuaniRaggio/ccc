@@ -1,0 +1,4 @@
+constexpr int32_t a[5] = {1, 2};
+int32_t top(int32_t p) {
+    return p + a[0];
+}
