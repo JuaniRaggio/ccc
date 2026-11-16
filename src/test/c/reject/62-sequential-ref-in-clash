@@ -1,0 +1,8 @@
+__sequential void f(uint32_t & r, uint32_t n) {
+    uint32_t r_in = 0;
+    uint32_t i = 0;
+    while (i < n) {
+        r = r + 1;
+        i++;
+    }
+}

@@ -1,0 +1,13 @@
+__sequential uint32_t f(uint32_t n, bool c) {
+    uint32_t a = 0;
+    uint32_t b = 0;
+    uint32_t i = 0;
+    while (i < n) {
+        if (c) {
+            a = i;
+            b = a;
+        }
+        i++;
+    }
+    return b;
+}

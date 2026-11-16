@@ -1,0 +1,10 @@
+__sequential uint32_t dosfor(uint32_t n) {
+    uint32_t acc = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        acc += i;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        acc += 2 * i;
+    }
+    return acc;
+}

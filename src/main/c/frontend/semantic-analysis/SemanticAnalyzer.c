@@ -2,7 +2,9 @@
 #include "frontend/semantic-analysis/ConstexprEval.h"
 #include "frontend/syntactic-analysis/AccessSets.h"
 #include "frontend/syntactic-analysis/AstWalk.h"
+#include "frontend/syntactic-analysis/SeqSchedule.h"
 #include "frontend/syntactic-analysis/TypeInfo.h"
+#include <stdio.h>
 #include <string.h>
 
 static Logger *_logger = NULL;
@@ -438,6 +440,70 @@ _scopeLookup(Scope *scope, const char *name, bool *found, bool *isArray) {
 	return TYPE_INT32;
 }
 
+/* Every name of a function (parameter or local) becomes one module-level signal, whatever
+ * the scope it was declared in. So a name must not shadow or redeclare one already visible,
+ * and locals that reuse a name in sibling scopes (two `for (uint32_t i ...)` loops) must
+ * agree in type and array size, since they share the signal. */
+typedef struct {
+	char *name;
+	TypeKind type;
+	Expr *arraySize;
+} FunctionName;
+
+static FunctionName *_functionNames = NULL;
+static int _functionNameCount = 0;
+static int _functionNameCapacity = 0;
+
+static void
+_functionNamesReset(void) {
+	free(_functionNames);
+	_functionNames = NULL;
+	_functionNameCount = 0;
+	_functionNameCapacity = 0;
+}
+
+static bool
+_sameArraySize(Expr *a, Expr *b, Program *program) {
+	if (a == NULL || b == NULL) {
+		return a == b;
+	}
+	int64_t sizeA;
+	int64_t sizeB;
+	return evalConstexpr(a, program, &sizeA) && evalConstexpr(b, program, &sizeB) && sizeA == sizeB;
+}
+
+/* Declares a parameter or local in scope, enforcing the rule above. */
+static void
+_declareName(Scope *scope, Program *program, char *name, TypeKind type, Expr *arraySize, bool *ok) {
+	bool visible = false;
+	_scopeLookup(scope, name, &visible, NULL);
+	if (visible) {
+		logError(_logger, "'%s' shadows or redeclares a name already in scope.", name);
+		*ok = false;
+	}
+	bool seen = false;
+	for (int i = 0; i < _functionNameCount; ++i) {
+		FunctionName *previous = &_functionNames[i];
+		if (strcmp(previous->name, name) != 0) {
+			continue;
+		}
+		seen = true;
+		if (!visible && (previous->type != type || !_sameArraySize(previous->arraySize, arraySize, program))) {
+			logError(_logger, "'%s' is redeclared with a different type or size; it is a single signal.", name);
+			*ok = false;
+		}
+		break;
+	}
+	if (!seen) {
+		if (_functionNameCount == _functionNameCapacity) {
+			_functionNameCapacity = _functionNameCapacity == 0 ? 8 : _functionNameCapacity * 2;
+			_functionNames = realloc(_functionNames, _functionNameCapacity * sizeof(FunctionName));
+		}
+		_functionNames[_functionNameCount++] = (FunctionName){ .name = name, .type = type, .arraySize = arraySize };
+	}
+	_scopeDeclare(scope, name, type, arraySize != NULL);
+}
+
 static bool
 _isArrayName(Scope *scope, Program *program, const char *name) {
 	bool found = false;
@@ -747,7 +813,7 @@ _typeCheckStmt(Stmt *stmt, Scope *scope, Program *program, TypeKind returnType, 
 				*ok = false;
 			}
 		}
-		_scopeDeclare(scope, stmt->localDecl.name, stmt->localDecl.type, stmt->localDecl.arraySize != NULL);
+		_declareName(scope, program, stmt->localDecl.name, stmt->localDecl.type, stmt->localDecl.arraySize, ok);
 		break;
 	case STMT_IF:
 		_typeCheckCondition(stmt->ifStmt.condition, scope, program, ok);
@@ -810,15 +876,18 @@ _checkTypes(Program *program) {
 		Decl *decl = node->decl;
 		if (_isFunctionDecl(decl)) {
 			Scope funcScope = { .symbols = NULL, .count = 0, .capacity = 0, .parent = NULL };
+			_functionNamesReset();
 			for (ParamList *paramNode = decl->func.params; paramNode != NULL; paramNode = paramNode->next) {
-				if (paramNode->param->kind == PARAM_ARRAY) {
-					_inferType(paramNode->param->arraySize, &funcScope, program, &ok);
+				Param *param = paramNode->param;
+				if (param->kind == PARAM_ARRAY) {
+					_inferType(param->arraySize, &funcScope, program, &ok);
 				}
-				_scopeDeclare(&funcScope, paramNode->param->name, paramNode->param->type,
-				              paramNode->param->kind == PARAM_ARRAY);
+				_declareName(&funcScope, program, param->name, param->type,
+				             param->kind == PARAM_ARRAY ? param->arraySize : NULL, &ok);
 			}
 			_typeCheckStmt(decl->func.body, &funcScope, program, decl->func.returnType, &ok);
 			free(funcScope.symbols);
+			_functionNamesReset();
 		} else if (decl->kind == DECL_CONSTEXPR_VAR) {
 			if (decl->constexprVar.init != NULL) {
 				TypeKind initType = _inferType(decl->constexprVar.init, NULL, program, &ok);
@@ -938,15 +1007,24 @@ _checkAliasing(Program *program) {
 	return !scope.violation;
 }
 
-/* The sequential (FSM) backend compiles a body shaped as preamble + one top-level
- * loop + epilogue. It cannot represent nested or multiple loops, calls, parallel
- * blocks, or a return nested inside control flow, so those are rejected here instead
- * of being silently dropped by the generator. */
+/* The sequential (FSM) backend schedules the body into states (see SeqSchedule.h). It
+ * cannot represent calls, parallel blocks, a loop inside an if (an if runs within one
+ * cycle), a return that is not the last top-level statement, or a loop or return inside a
+ * bare { } block, so those are rejected here instead of being miscompiled. */
+static void _nameSetCopy(const NameSet *source, NameSet *target);
+
+static const char *const SEQ_ERR_CALL = "A __sequential function cannot contain calls.";
+static const char *const SEQ_ERR_PARALLEL = "A __sequential function cannot contain __parallel blocks.";
+static const char *const SEQ_ERR_LOOP_IN_IF
+    = "A __sequential function cannot place a loop inside an if (an if runs within one cycle).";
+static const char *const SEQ_ERR_RETURN
+    = "In a __sequential function, return must be the last top-level statement (not inside an if or loop).";
+static const char *const SEQ_ERR_BLOCK
+    = "A __sequential function cannot place a loop or return inside a bare { } block.";
+
 typedef struct {
 	bool hasCall;
 	bool hasParallel;
-	int loopCount;
-	int returnCount;
 } SeqScan;
 
 static void
@@ -958,76 +1036,97 @@ _seqScanExpr(Expr *expr, void *context) {
 
 static void
 _seqScanStmt(Stmt *stmt, void *context) {
-	SeqScan *scan = context;
-	if (stmt->kind == STMT_FOR || stmt->kind == STMT_WHILE) {
-		++scan->loopCount;
-	} else if (stmt->kind == STMT_PARALLEL) {
-		scan->hasParallel = true;
-	} else if (stmt->kind == STMT_RETURN) {
-		++scan->returnCount;
+	if (stmt->kind == STMT_PARALLEL) {
+		((SeqScan *)context)->hasParallel = true;
 	}
 }
 
-/* A loop must not sit inside an if (the FSM schedules an if combinationally, within one
- * cycle, so it cannot contain a multi-cycle loop). A return must sit at the function's top
- * level, never inside a loop or an if. Loops may be multiple and nested. */
-static bool
-_seqPlacementOk(Stmt *stmt, bool inIf, bool inLoop) {
+static const char *_seqPlacementError(Stmt *stmt, bool inIf, bool inLoop, bool inBlock);
+
+/* A body (of a loop or an if branch): a compound is its statement list, not a bare block. */
+static const char *
+_seqBodyPlacementError(Stmt *body, bool inIf, bool inLoop, bool inBlock) {
+	if (body != NULL && body->kind == STMT_COMPOUND) {
+		for (StmtList *node = body->compound; node != NULL; node = node->next) {
+			const char *error = _seqPlacementError(node->stmt, inIf, inLoop, inBlock);
+			if (error != NULL) {
+				return error;
+			}
+		}
+		return NULL;
+	}
+	return _seqPlacementError(body, inIf, inLoop, inBlock);
+}
+
+static const char *
+_seqPlacementError(Stmt *stmt, bool inIf, bool inLoop, bool inBlock) {
 	if (stmt == NULL) {
-		return true;
+		return NULL;
 	}
 	switch (stmt->kind) {
 	case STMT_FOR:
-		return !inIf && _seqPlacementOk(stmt->forStmt.body, false, true);
 	case STMT_WHILE:
-		return !inIf && _seqPlacementOk(stmt->whileStmt.body, false, true);
-	case STMT_IF:
-		return _seqPlacementOk(stmt->ifStmt.thenBranch, true, inLoop)
-		       && _seqPlacementOk(stmt->ifStmt.elseBranch, true, inLoop);
+		if (inIf) {
+			return SEQ_ERR_LOOP_IN_IF;
+		}
+		if (inBlock) {
+			return SEQ_ERR_BLOCK;
+		}
+		return _seqBodyPlacementError(seqLoopBody(stmt), false, true, false);
+	case STMT_IF: {
+		const char *error = _seqBodyPlacementError(stmt->ifStmt.thenBranch, true, inLoop, inBlock);
+		return error != NULL ? error : _seqBodyPlacementError(stmt->ifStmt.elseBranch, true, inLoop, inBlock);
+	}
 	case STMT_RETURN:
-		return !inIf && !inLoop;
+		if (inIf || inLoop) {
+			return SEQ_ERR_RETURN;
+		}
+		return inBlock ? SEQ_ERR_BLOCK : NULL;
 	case STMT_COMPOUND:
+		/* Reached as a statement, so it is a bare block. */
 		for (StmtList *node = stmt->compound; node != NULL; node = node->next) {
-			if (!_seqPlacementOk(node->stmt, inIf, inLoop)) {
-				return false;
+			const char *error = _seqPlacementError(node->stmt, inIf, inLoop, true);
+			if (error != NULL) {
+				return error;
 			}
 		}
-		return true;
+		return NULL;
 	default:
-		return true;
+		return NULL;
 	}
 }
 
-static bool
-_sequentialBodyIsRepresentable(Stmt *body) {
+/* NULL when the FSM backend can represent the body, else the reason it cannot. */
+static const char *
+_sequentialBodyError(Stmt *body) {
 	SeqScan scan = { 0 };
 	walkStmts(body, _seqScanStmt, &scan);
 	walkStmtExprs(body, _seqScanExpr, &scan);
-	if (scan.hasCall || scan.hasParallel) {
-		return false;
+	if (scan.hasCall) {
+		return SEQ_ERR_CALL;
 	}
-	if (!_seqPlacementOk(body, false, false)) {
-		return false;
+	if (scan.hasParallel) {
+		return SEQ_ERR_PARALLEL;
+	}
+	const char *error = _seqBodyPlacementError(body, false, false, false);
+	if (error != NULL) {
+		return error;
 	}
 	/* A return, if present, must be the single last top-level statement. */
-	int topReturns = 0;
-	Stmt *last = NULL;
 	for (StmtList *node = body->compound; node != NULL; node = node->next) {
-		if (node->stmt->kind == STMT_RETURN) {
-			++topReturns;
+		if (node->stmt->kind == STMT_RETURN && node->next != NULL) {
+			return SEQ_ERR_RETURN;
 		}
-		last = node->stmt;
 	}
-	if (topReturns > 1 || (topReturns == 1 && (last == NULL || last->kind != STMT_RETURN))) {
-		return false;
-	}
-	return true;
+	return NULL;
 }
 
-/* Statements that share a cycle become concurrent nonblocking register updates, so a
- * read sees the value latched at the previous edge. If a statement reads a variable an
- * earlier statement in the same cycle wrote (RAW), the FSM miscompiles the sequential
- * reading. A local declaration becomes a register, so its name is a write. */
+/* Statements that share a cycle become concurrent nonblocking register updates, so a read
+ * sees the value latched at the previous edge. If a statement reads a variable written
+ * earlier in the same cycle (RAW), the FSM miscompiles the sequential reading. The check
+ * walks the cycle in program order, including inside if branches and bare blocks, keeping
+ * the set of names written so far. A local declaration with an initializer is a write. */
+/* A local declaration becomes a register or signal, so an initialized one is a write. */
 static void
 _addDeclWrite(Stmt *stmt, void *context) {
 	if (stmt->kind == STMT_LOCAL_DECL && (stmt->localDecl.init != NULL || stmt->localDecl.initList != NULL)) {
@@ -1035,97 +1134,80 @@ _addDeclWrite(Stmt *stmt, void *context) {
 	}
 }
 
-static void
-_seqStmtAccesses(Stmt *stmt, NameSet *reads, NameSet *writes) {
+static bool
+_cycleLeafHasRAW(Stmt *stmt, NameSet *written) {
+	NameSet reads = { 0 };
+	NameSet writes = { 0 };
 	/* A sequential body has no calls (rejected earlier), so no call propagation is needed. */
-	collectStmtAccesses(stmt, NULL, reads, writes);
-	walkStmts(stmt, _addDeclWrite, writes);
-}
-
-static bool
-_cycleGroupHasRAW(Stmt **stmts, int count) {
-	if (count <= 1) {
-		return false;
+	collectStmtAccesses(stmt, NULL, &reads, &writes);
+	_addDeclWrite(stmt, &writes);
+	bool hazard = nameSetsIntersect(written, &reads);
+	for (int i = 0; i < writes.count; ++i) {
+		nameSetAdd(written, writes.names[i]);
 	}
-	NameSet *reads = calloc(count, sizeof(NameSet));
-	NameSet *writes = calloc(count, sizeof(NameSet));
-	for (int i = 0; i < count; ++i) {
-		_seqStmtAccesses(stmts[i], &reads[i], &writes[i]);
-	}
-	bool hazard = false;
-	for (int j = 0; j < count && !hazard; ++j) {
-		for (int i = 0; i < j; ++i) {
-			if (nameSetsIntersect(&writes[i], &reads[j])) {
-				hazard = true;
-				break;
-			}
-		}
-	}
-	for (int i = 0; i < count; ++i) {
-		nameSetFree(&reads[i]);
-		nameSetFree(&writes[i]);
-	}
-	free(reads);
-	free(writes);
-	return hazard;
-}
-
-static bool _seqRegionHasHazard(StmtList *stmts);
-
-static bool
-_seqRegionStmtHasHazard(Stmt *body) {
-	if (body == NULL) {
-		return false;
-	}
-	if (body->kind == STMT_COMPOUND) {
-		return _seqRegionHasHazard(body->compound);
-	}
-	StmtList single = { .stmt = body, .next = NULL };
-	return _seqRegionHasHazard(&single);
-}
-
-/* Each maximal run of non-loop statements in a region shares one FSM cycle; check RAW
- * within it and recurse into loop bodies. The for-init and for-update land in their own
- * states (one statement each, no intra-cycle RAW), so they are not grouped here. */
-static bool
-_seqRegionHasHazard(StmtList *stmts) {
-	int count = 0;
-	for (StmtList *node = stmts; node != NULL; node = node->next) {
-		++count;
-	}
-	if (count == 0) {
-		return false;
-	}
-	Stmt **items = malloc(count * sizeof(Stmt *));
-	int index = 0;
-	for (StmtList *node = stmts; node != NULL; node = node->next) {
-		items[index++] = node->stmt;
-	}
-	Stmt **group = malloc(count * sizeof(Stmt *));
-	bool hazard = false;
-	int i = 0;
-	while (i < count && !hazard) {
-		if (items[i]->kind == STMT_FOR || items[i]->kind == STMT_WHILE) {
-			Stmt *body = items[i]->kind == STMT_FOR ? items[i]->forStmt.body : items[i]->whileStmt.body;
-			hazard = _seqRegionStmtHasHazard(body);
-			++i;
-		} else {
-			int groupCount = 0;
-			while (i < count && items[i]->kind != STMT_FOR && items[i]->kind != STMT_WHILE) {
-				group[groupCount++] = items[i];
-				++i;
-			}
-			hazard = _cycleGroupHasRAW(group, groupCount);
-		}
-	}
-	free(items);
-	free(group);
+	nameSetFree(&reads);
+	nameSetFree(&writes);
 	return hazard;
 }
 
 static bool
-_sequentialBodyHasHazard(Stmt *body) {
-	return _seqRegionHasHazard(body->compound);
+_cycleStmtHasRAW(Stmt *stmt, NameSet *written) {
+	if (stmt == NULL) {
+		return false;
+	}
+	switch (stmt->kind) {
+	case STMT_COMPOUND:
+		for (StmtList *node = stmt->compound; node != NULL; node = node->next) {
+			if (_cycleStmtHasRAW(node->stmt, written)) {
+				return true;
+			}
+		}
+		return false;
+	case STMT_IF: {
+		Stmt condition = { .kind = STMT_EXPR };
+		condition.exprStmt = stmt->ifStmt.condition;
+		if (_cycleLeafHasRAW(&condition, written)) {
+			return true;
+		}
+		/* Each branch starts from the writes before the if; afterwards, a write from
+		 * either branch may have happened in this cycle. */
+		NameSet thenSet = { 0 };
+		NameSet elseSet = { 0 };
+		_nameSetCopy(written, &thenSet);
+		_nameSetCopy(written, &elseSet);
+		bool hazard = _cycleStmtHasRAW(stmt->ifStmt.thenBranch, &thenSet)
+		              || _cycleStmtHasRAW(stmt->ifStmt.elseBranch, &elseSet);
+		_nameSetCopy(&thenSet, written);
+		_nameSetCopy(&elseSet, written);
+		nameSetFree(&thenSet);
+		nameSetFree(&elseSet);
+		return hazard;
+	}
+	default:
+		return _cycleLeafHasRAW(stmt, written);
+	}
+}
+
+/* Checks each cycle of a region (one per run of simple statements) and recurses into loop
+ * bodies. The for-init and for-update take their own states (one statement each). */
+static bool
+_seqRegionHasHazard(Stmt *body) {
+	SeqRegion region = seqRegionOf(body);
+	bool hazard = false;
+	for (int i = 0; i < region.count && !hazard; ++i) {
+		SeqSegment *segment = &region.segments[i];
+		if (segment->isLoop) {
+			hazard = _seqRegionHasHazard(seqLoopBody(segment->stmts[0]));
+			continue;
+		}
+		NameSet written = { 0 };
+		for (int k = 0; k < segment->count && !hazard; ++k) {
+			hazard = _cycleStmtHasRAW(segment->stmts[k], &written);
+		}
+		nameSetFree(&written);
+	}
+	seqRegionFree(&region);
+	return hazard;
 }
 
 static bool
@@ -1170,12 +1252,12 @@ _checkSequential(Program *program) {
 		if (decl->kind != DECL_FUNCTION || !decl->func.sequential) {
 			continue;
 		}
-		if (!_sequentialBodyIsRepresentable(decl->func.body)) {
-			logError(_logger,
-			         "A __sequential function admits one top-level loop, no nested loops, calls or parallel blocks.");
+		const char *error = _sequentialBodyError(decl->func.body);
+		if (error != NULL) {
+			logError(_logger, "%s", error);
 			return false;
 		}
-		if (_sequentialBodyHasHazard(decl->func.body)) {
+		if (_seqRegionHasHazard(decl->func.body)) {
 			logError(_logger, "A __sequential cycle cannot read a value written earlier in the same cycle; split "
 			                  "the dependency across iterations.");
 			return false;
@@ -1576,6 +1658,12 @@ _checkTailReturns(Program *program) {
 	return true;
 }
 
+static bool
+_isReadWriteRefParam(Param *param, const NameSet *reads, const NameSet *writes) {
+	return (param->kind == PARAM_REF || param->kind == PARAM_ARRAY) && nameSetContains(reads, param->name)
+	       && nameSetContains(writes, param->name);
+}
+
 /* A reference read and written in a combinational function becomes an inout port driven
  * by always_comb that reads its own output: a combinational loop (unsynthesizable). Such
  * a read-modify needs a register, i.e. a __sequential function. */
@@ -1591,8 +1679,7 @@ _checkCombinationalRefs(Program *program) {
 		collectStmtAccesses(decl->func.body, program, &reads, &writes);
 		bool violation = false;
 		for (ParamList *param = decl->func.params; param != NULL; param = param->next) {
-			if ((param->param->kind == PARAM_REF || param->param->kind == PARAM_ARRAY)
-			    && nameSetContains(&reads, param->param->name) && nameSetContains(&writes, param->param->name)) {
+			if (_isReadWriteRefParam(param->param, &reads, &writes)) {
 				violation = true;
 				break;
 			}
@@ -1600,6 +1687,114 @@ _checkCombinationalRefs(Program *program) {
 		nameSetFree(&reads);
 		nameSetFree(&writes);
 		if (violation) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/* A for loop without a condition never finishes: the combinational unroll diverges and the
+ * FSM has no exit. */
+static void
+_findConditionlessFor(Stmt *stmt, void *context) {
+	if (stmt->kind == STMT_FOR && stmt->forStmt.condition == NULL) {
+		*(bool *)context = true;
+	}
+}
+
+static bool
+_checkForConditions(Program *program) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		if (!_isFunctionDecl(node->decl)) {
+			continue;
+		}
+		bool violation = false;
+		walkStmts(node->decl->func.body, _findConditionlessFor, &violation);
+		if (violation) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static void
+_findCall(Expr *expr, void *context) {
+	if (expr->kind == EXPR_CALL) {
+		*(bool *)context = true;
+	}
+}
+
+static void
+_findCallInLoop(Stmt *stmt, void *context) {
+	if (stmt->kind == STMT_FOR || stmt->kind == STMT_WHILE) {
+		walkStmtExprs(stmt, _findCall, context);
+	}
+}
+
+/* A call becomes one module instance outside always_comb, wired to its arguments. Inside an
+ * unrolled loop every iteration would share that single instance (its argument is not the
+ * per-iteration value), so the circuit would not compute the program. */
+static bool
+_checkCallsInLoops(Program *program) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (decl->kind != DECL_FUNCTION || decl->func.sequential) {
+			continue;
+		}
+		bool violation = false;
+		walkStmts(decl->func.body, _findCallInLoop, &violation);
+		if (violation) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/* The generator adds its own signals to each module: `out` for the return value and, in a
+ * __sequential module, the handshake (clk, rst, start, done), the state register, the
+ * array-load index and a `<name>_in` input per read-write reference. A parameter or local
+ * with one of those names would be declared twice. */
+static bool
+_checkGeneratedNames(Program *program) {
+	static const char *sequentialNames[] = { "clk", "rst", "start", "done", "ccc_state", "ccc_k", NULL };
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (decl->kind != DECL_FUNCTION) {
+			continue;
+		}
+		NameSet names = { 0 };
+		for (ParamList *param = decl->func.params; param != NULL; param = param->next) {
+			nameSetAdd(&names, param->param->name);
+		}
+		walkStmts(decl->func.body, _collectLocalName, &names);
+
+		bool clash = decl->func.returnType != TYPE_VOID && nameSetContains(&names, "out");
+		if (decl->func.sequential) {
+			for (int i = 0; sequentialNames[i] != NULL && !clash; ++i) {
+				clash = nameSetContains(&names, sequentialNames[i]);
+			}
+			NameSet reads = { 0 };
+			NameSet writes = { 0 };
+			collectStmtAccesses(decl->func.body, program, &reads, &writes);
+			for (ParamList *param = decl->func.params; param != NULL && !clash; param = param->next) {
+				if (!_isReadWriteRefParam(param->param, &reads, &writes)) {
+					continue;
+				}
+				size_t length = strlen(param->param->name) + sizeof("_in");
+				char *loaded = malloc(length);
+				snprintf(loaded, length, "%s_in", param->param->name);
+				clash = nameSetContains(&names, loaded);
+				free(loaded);
+			}
+			nameSetFree(&reads);
+			nameSetFree(&writes);
+		}
+		nameSetFree(&names);
+		if (clash) {
+			logError(_logger,
+			         "In function '%s', a name collides with a signal the generator adds (out, clk, rst, "
+			         "start, done, ccc_*, or <reference>_in).",
+			         decl->func.name);
 			return false;
 		}
 	}
@@ -1615,6 +1810,13 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 	}
 	if (!_checkTypes(program)) {
 		logError(_logger, "The program has name-resolution or type errors.");
+		return false;
+	}
+	if (!_checkGeneratedNames(program)) {
+		return false;
+	}
+	if (!_checkForConditions(program)) {
+		logError(_logger, "A for loop must have a condition.");
 		return false;
 	}
 	if (!_checkReturns(program)) {
@@ -1659,6 +1861,11 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 		return false;
 	}
 	if (!_checkSequential(program)) {
+		return false;
+	}
+	if (!_checkCallsInLoops(program)) {
+		logError(_logger, "A combinational function cannot call a function inside a loop (all iterations would "
+		                  "share one module instance).");
 		return false;
 	}
 	if (!_checkSingleDriver(program)) {
