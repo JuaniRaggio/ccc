@@ -1664,6 +1664,34 @@ _isReadWriteRefParam(Param *param, const NameSet *reads, const NameSet *writes) 
 	       && nameSetContains(writes, param->name);
 }
 
+/* A by-value parameter is an input port, so assigning it would drive an input (illegal
+ * SV). Constexpr functions are interpreted, not synthesized, so they may mutate the copy. */
+static bool
+_checkValueParamWrites(Program *program) {
+	for (DeclList *node = program->decls; node != NULL; node = node->next) {
+		Decl *decl = node->decl;
+		if (decl->kind != DECL_FUNCTION) {
+			continue;
+		}
+		NameSet reads = { 0 };
+		NameSet writes = { 0 };
+		collectStmtAccesses(decl->func.body, program, &reads, &writes);
+		bool violation = false;
+		for (ParamList *param = decl->func.params; param != NULL; param = param->next) {
+			if (param->param->kind == PARAM_VALUE && nameSetContains(&writes, param->param->name)) {
+				violation = true;
+				break;
+			}
+		}
+		nameSetFree(&reads);
+		nameSetFree(&writes);
+		if (violation) {
+			return false;
+		}
+	}
+	return true;
+}
+
 /* A reference read and written in a combinational function becomes an inout port driven
  * by always_comb that reads its own output: a combinational loop (unsynthesizable). Such
  * a read-modify needs a register, i.e. a __sequential function. */
@@ -1875,6 +1903,10 @@ executeSemanticAnalysis(CompilerState *compilerState) {
 	if (!_checkCombinationalRefs(program)) {
 		logError(_logger,
 		         "A read-write reference or array requires a __sequential function (it forms a combinational loop).");
+		return false;
+	}
+	if (!_checkValueParamWrites(program)) {
+		logError(_logger, "A by-value parameter cannot be assigned (it is an input port); copy it into a local.");
 		return false;
 	}
 	if (!_checkDefiniteAssignment(program)) {
